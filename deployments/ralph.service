@@ -1,0 +1,34 @@
+[Unit]
+Description=Ralph - Continuous Improvement Service
+After=network.target
+
+[Service]
+Type=simple
+User=ralph
+Group=ralph
+WorkingDirectory=/opt/ralph
+ExecStart=/opt/ralph/ralph
+Restart=always
+RestartSec=10
+
+# Required Configuration
+Environment="GITHUB_PAT=PLACEHOLDER_GITHUB_PAT"
+Environment="GITHUB_REPO=Owner/Repo"
+Environment="JULES_API_KEY=PLACEHOLDER_JULES_API_KEY"
+
+# Optional Configuration (Defaults shown)
+Environment="MAX_JULES_SESSIONS=1"
+Environment="MAX_SESSIONS_PER_DAY=100"
+Environment="SPEC_PATH=docs/spec"
+Environment="IMPL_PLAN_PATH=IMPLEMENTATION_PLAN.md"
+Environment="AGENTS_PROMPT_PATH=AGENTS.md"
+Environment="SYSTEM_PROMPT_PATH=SYSTEM_PROMPT.md"
+Environment="SYSTEM_PROMPT_PATH=SYSTEM_PROMPT.md"
+Environment="CHECK_INTERVAL_SECONDS=60"
+
+# Prompt Template Overrides (uncomment to use)
+# Environment="GAP_ANALYSIS_TEMPLATE_PATH=/path/to/my/gap_analysis.md"
+# Environment="RESOLUTION_TEMPLATE_PATH=/path/to/my/resolution.md"
+
+[Install]
+WantedBy=multi-user.target
