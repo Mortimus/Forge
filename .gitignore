@@ -18,5 +18,5 @@
 go.work
 
 # Forge specific
-forge
+/forge
 .env

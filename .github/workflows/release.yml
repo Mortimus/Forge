@@ -18,9 +18,6 @@ jobs:
       with:
         go-version: '1.25.x'
 
-    - name: Debug Files
-      run: ls -R
-
     - name: Build
       run: |
         go build -v -o forge ./cmd/forge
