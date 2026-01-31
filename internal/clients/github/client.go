@@ -122,7 +122,7 @@ func (c *Client) CloseIssue(ctx context.Context, number int) error {
 
 // MergePR merges a pull request
 func (c *Client) MergePR(ctx context.Context, number int) error {
-	_, _, err := c.client.PullRequests.Merge(ctx, c.owner, c.repo, number, "Automated merge by Ralph", nil)
+	_, _, err := c.client.PullRequests.Merge(ctx, c.owner, c.repo, number, "Automated merge by Forge", nil)
 	return err
 }
 

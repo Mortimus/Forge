@@ -1,13 +1,13 @@
 [Unit]
-Description=Ralph - Continuous Improvement Service
+Description=Forge - Continuous Improvement Service
 After=network.target
 
 [Service]
 Type=simple
-User=ralph
-Group=ralph
-WorkingDirectory=/opt/ralph
-ExecStart=/opt/ralph/ralph
+User=forge
+Group=forge
+WorkingDirectory=/opt/forge
+ExecStart=/opt/forge/forge
 Restart=always
 RestartSec=10
 

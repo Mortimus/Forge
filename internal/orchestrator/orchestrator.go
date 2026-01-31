@@ -1,4 +1,4 @@
-// Package orchestrator implements the core logic of the Ralph service.
+// Package orchestrator implements the core logic of the Forge service.
 // It manages the OODA loop: observing GitHub state, deciding on actions, and acting via Jules.
 package orchestrator
 
@@ -12,11 +12,11 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/mortimus/ralph/internal/clients/github"
-	"github.com/mortimus/ralph/internal/clients/jules"
-	"github.com/mortimus/ralph/internal/config"
-	"github.com/mortimus/ralph/internal/prompts"
-	"github.com/mortimus/ralph/internal/stats"
+	"github.com/mortimus/forge/internal/clients/github"
+	"github.com/mortimus/forge/internal/clients/jules"
+	"github.com/mortimus/forge/internal/config"
+	"github.com/mortimus/forge/internal/prompts"
+	"github.com/mortimus/forge/internal/stats"
 )
 
 // Orchestrator manages the lifecycle of automated coding sessions.
@@ -272,7 +272,7 @@ func (o *Orchestrator) startGapAnalysis(ctx context.Context, specs []string) {
 		return
 	}
 
-	sessionTitle := fmt.Sprintf("Ralph Gap Analysis: %d Specs", len(specs))
+	sessionTitle := fmt.Sprintf("Forge Gap Analysis: %d Specs", len(specs))
 	sess, err := o.jules.CreateSession(ctx, sessionTitle, fullPrompt, o.sourceName, "main")
 	if err != nil {
 		log.Printf("Failed to create Jules session: %v", err)
@@ -316,7 +316,7 @@ func (o *Orchestrator) startResolution(ctx context.Context, plan string, specs [
 		return
 	}
 
-	sessionTitle := "Ralph Resolution"
+	sessionTitle := "Forge Resolution"
 	sess, err := o.jules.CreateSession(ctx, sessionTitle, fullPrompt, o.sourceName, "main")
 	if err != nil {
 		log.Printf("Failed to create Jules session: %v", err)

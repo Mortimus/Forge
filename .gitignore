@@ -17,6 +17,6 @@
 # Go workspace file
 go.work
 
-# Ralph specific
-ralph
+# Forge specific
+forge
 .env

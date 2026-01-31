@@ -72,7 +72,7 @@ Start a new coding task.
 If `requirePlanApproval` is set (default `false` via API?), you must approve manually.
 `POST /v1alpha/sessions/{session_id}:approvePlan`
 
-## 4. Integration Notes for Ralph
-- Ralph uses `automationMode: AUTO_CREATE_PR`.
-- Ralph needs to find the correct valid `source` name (e.g., `sources/github/mortimus/Ralph`) before creating a session, or construct it if it follows a standard pattern.
-- Ralph monitors the session via polling to see when `outputs.pullRequest` appears.
+## 4. Integration Notes for Forge
+- Forge uses `automationMode: AUTO_CREATE_PR`.
+- Forge needs to find the correct valid `source` name (e.g., `sources/github/mortimus/Forge`) before creating a session, or construct it if it follows a standard pattern.
+- Forge monitors the session via polling to see when `outputs.pullRequest` appears.
