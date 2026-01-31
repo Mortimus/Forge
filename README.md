@@ -1,5 +1,11 @@
 # ![Forge Logo](logo.jpg) Forge - The Spec-Driven Development Bot 🤖
 
+[![Build and Release](https://github.com/Mortimus/Forge/actions/workflows/release.yml/badge.svg)](https://github.com/Mortimus/Forge/actions/workflows/release.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Mortimus/Forge)](https://goreportcard.com/report/github.com/Mortimus/Forge)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/Mortimus/Forge)](https://github.com/Mortimus/Forge/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+
 Forge is a **stateless, autonomous coding agent** that lives in your GitHub repository. He transforms **Markdown Specifications** into **Working Code** through an infinite loop of analysis, planning, and execution.
 
 Unlike a typical CI/CD tool, Forge doesn't just run tests—he writes the code that makes them pass.
@@ -59,6 +65,7 @@ Forge is configured via environment variables (typically in `/etc/systemd/system
 | `JULES_API_KEY` | Google Jules API Key | **Required** |
 | `GITHUB_PAT` | GitHub PAT with Repo scope | **Required** |
 | `GITHUB_REPO` | Owner/Repo (e.g. `User/Repo`) | **Required** |
+| `AUTO_MERGE` | Automatically merge PRs | `true` |
 | `SPEC_PATH` | Path to Spec files | `docs/spec` |
 | `IMPL_PLAN_PATH` | Path to Implementation Plan | `IMPLEMENTATION_PLAN.md` |
 | `AGENTS_PROMPT_PATH` | Path to Context Memory | `AGENTS.md` |

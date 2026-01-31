@@ -179,6 +179,12 @@ func (o *Orchestrator) handleSessionCompletion(ctx context.Context, meta *Active
 	var prNum int
 	fmt.Sscanf(prNumStr, "%d", &prNum)
 
+	if !o.cfg.AutoMerge {
+		log.Printf("Auto-Merge disabled. PR %d created but not merged: %s", prNum, pr.URL)
+		o.stats.IncPRMerged() // reuse stat or create new? Let's treat "PR created" as success metric for now.
+		return
+	}
+
 	err := o.gh.MergePR(ctx, prNum)
 	if err != nil {
 		log.Printf("Failed to merge PR %d: %v.", prNum, err)
@@ -190,7 +196,18 @@ func (o *Orchestrator) handleSessionCompletion(ctx context.Context, meta *Active
 }
 
 func (o *Orchestrator) findNewWork(ctx context.Context) {
-	// 1. Check for Specs (Remote)
+	// 1. Check for Open PRs (Blocking)
+	prs, err := o.gh.ListOpenPullRequests(ctx)
+	if err != nil {
+		log.Printf("Failed to list open PRs: %v", err)
+		return
+	}
+	if len(prs) > 0 {
+		log.Printf("Blocking new sessions: %d Open Pull Requests found (PR #%d: %s)", len(prs), prs[0].GetNumber(), prs[0].GetTitle())
+		return
+	}
+
+	// 2. Check for Specs (Remote)
 	files, err := o.gh.ListFiles(ctx, o.cfg.SpecPath)
 	if err != nil {
 		// Log rarely to avoid spam or if error is other than Not Found

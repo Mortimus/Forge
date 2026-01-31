@@ -20,6 +20,9 @@ type Config struct {
 	// MaxSessionsPerDay is the safety limit for daily sessions (default 100).
 	MaxSessionsPerDay   int    `envconfig:"MAX_SESSIONS_PER_DAY" default:"100"`
 
+	// AutoMerge controls if PRs are merged automatically (default true).
+	AutoMerge           bool   `envconfig:"AUTO_MERGE" default:"true"`
+
 	// GitHub Configuration
 
 	// GithubPAT is the Personal Access Token for GitHub API access.

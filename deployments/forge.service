@@ -19,6 +19,7 @@ Environment="JULES_API_KEY=PLACEHOLDER_JULES_API_KEY"
 # Optional Configuration (Defaults shown)
 Environment="MAX_JULES_SESSIONS=1"
 Environment="MAX_SESSIONS_PER_DAY=100"
+Environment="AUTO_MERGE=true"
 Environment="SPEC_PATH=docs/spec"
 Environment="IMPL_PLAN_PATH=IMPLEMENTATION_PLAN.md"
 Environment="AGENTS_PROMPT_PATH=AGENTS.md"

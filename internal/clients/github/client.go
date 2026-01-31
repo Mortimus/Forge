@@ -62,6 +62,27 @@ func (c *Client) ListOpenIssuesByLabel(ctx context.Context, label string) ([]*gi
 	return allIssues, nil
 }
 
+// ListOpenPullRequests returns all open pull requests
+func (c *Client) ListOpenPullRequests(ctx context.Context) ([]*github.PullRequest, error) {
+	opts := &github.PullRequestListOptions{
+		State:       "open",
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	var allPRs []*github.PullRequest
+	for {
+		prs, resp, err := c.client.PullRequests.List(ctx, c.owner, c.repo, opts)
+		if err != nil {
+			return nil, err
+		}
+		allPRs = append(allPRs, prs...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return allPRs, nil
+}
+
 // CreateIssue creates a new issue
 func (c *Client) CreateIssue(ctx context.Context, title, body string, labels []string) (*github.Issue, error) {
 	req := &github.IssueRequest{

@@ -50,6 +50,16 @@ You MUST set these variables in the `[Service]` section:
 Environment="JULES_API_KEY=your_actual_google_key"
 Environment="GITHUB_PAT=your_github_personal_access_token"
 Environment="GITHUB_REPO=my-username/my-new-project"
+Environment="AUTO_MERGE=true"
+
+# Optional Configuration (Defaults)
+Environment="MAX_JULES_SESSIONS=1"
+Environment="MAX_SESSIONS_PER_DAY=100"
+Environment="CHECK_INTERVAL_SECONDS=60"
+Environment="SPEC_PATH=docs/spec"
+Environment="IMPL_PLAN_PATH=IMPLEMENTATION_PLAN.md"
+Environment="AGENTS_PROMPT_PATH=AGENTS.md"
+Environment="SYSTEM_PROMPT_PATH=SYSTEM_PROMPT.md"
 ```
 
 ### 4. Start Forge
@@ -151,6 +161,7 @@ Update `/etc/systemd/system/forge.service` to tell Forge where to find the new f
 # ...
 Environment="GAP_ANALYSIS_TEMPLATE_PATH=/opt/forge/templates/gap_analysis.md"
 Environment="RESOLUTION_TEMPLATE_PATH=/opt/forge/templates/resolution.md"
+Environment="AUTO_MERGE=false"
 ```
 
 ### 4. Restart
