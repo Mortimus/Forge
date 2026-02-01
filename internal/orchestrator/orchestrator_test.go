@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/mortimus/forge/internal/clients/jules"
 	"github.com/mortimus/forge/internal/config"
 	"github.com/mortimus/forge/internal/mocks"
+	"github.com/mortimus/forge/internal/persistence"
 	"github.com/mortimus/forge/internal/stats"
 )
 
@@ -130,4 +132,48 @@ func TestProcessRepo_BlockingPR(t *testing.T) {
 	if len(o.activeSessions) != 0 {
 		t.Error("blocked by PR but started session")
 	}
+}
+
+func TestGlobalRateLimit(t *testing.T) {
+	cfg := createTestConfig()
+	cfg.MaxSessionsPerDay = 1 // Limit to 1
+	jMock := &mocks.JulesMock{}
+	s := stats.New()
+
+	// Mock Persistence
+	pm, _ := createTempPersistence(t)
+
+	o := New(cfg, jMock, s, pm)
+
+	// 1. First check -> OK
+	if err := o.checkRateLimit(); err != nil {
+		t.Errorf("First check failed: %v", err)
+	}
+
+	// 2. Record one session
+	o.recordSessionStart()
+
+	// 3. Second check -> Should Fail
+	if err := o.checkRateLimit(); err == nil {
+		t.Error("Second check succeeded, expected rate limit error")
+	}
+}
+func createTempPersistence(t *testing.T) (*persistence.Manager, string) {
+	tmpFile, err := os.CreateTemp("", "state.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpFile.Close() // Close so manager can read/write
+
+	// Initialize empty state
+	pm := persistence.NewManager(tmpFile.Name())
+	state := &persistence.State{}
+	pm.Save(state)
+	
+	// Cleanup
+	t.Cleanup(func() {
+		os.Remove(tmpFile.Name())
+	})
+
+	return pm, tmpFile.Name()
 }

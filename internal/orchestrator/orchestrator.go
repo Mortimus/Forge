@@ -27,9 +27,10 @@ type Orchestrator struct {
 	pm    *persistence.Manager
 
 	// State
-	mu             sync.Mutex
-	activeSessions map[string]*ActiveSession // Key: SessionID
-	activeRepos    map[string]*RepoContext   // Key: RepoName (Owner/Repo)
+	mu                sync.Mutex
+	activeSessions    map[string]*ActiveSession // Key: SessionID
+	activeRepos       map[string]*RepoContext   // Key: RepoName (Owner/Repo)
+	backoffMultiplier int                       // Current backoff multiplier (0 = no backoff)
 }
 
 // RepoContext holds the runtime state and configuration for a specific repository.
@@ -140,6 +141,15 @@ func (o *Orchestrator) monitorLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			backoff := o.getBackoffDuration()
+			if backoff > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+					// Backoff finished, try again
+				}
+			}
 			o.syncActiveSessions(ctx)
 		}
 	}
@@ -154,6 +164,15 @@ func (o *Orchestrator) repoLoop(ctx context.Context, rc *RepoContext) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			backoff := o.getBackoffDuration()
+			if backoff > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+					// Backoff finished
+				}
+			}
 			o.processRepo(ctx, rc)
 		}
 	}
@@ -164,8 +183,12 @@ func (o *Orchestrator) syncActiveSessions(ctx context.Context) {
 	sessions, err := o.jules.ListSessions(ctx)
 	if err != nil {
 		log.Printf("Error listing Jules sessions: %v", err)
+		// API error -> increase backoff
+		o.increaseBackoff()
 		return
 	}
+	// Success -> reset backoff
+	o.resetBackoff()
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -219,12 +242,9 @@ func (o *Orchestrator) syncActiveSessions(ctx context.Context) {
 }
 
 func (o *Orchestrator) processRepo(ctx context.Context, rc *RepoContext) {
-    if time.Since(rc.LastReset) > 24*time.Hour {
+	if time.Since(rc.LastReset) > 24*time.Hour {
          rc.DailyCount = 0
          rc.LastReset = time.Now()
-    }
-    if rc.DailyCount >= o.cfg.MaxSessionsPerDay { 
-         return
     }
 
     o.mu.Lock()
@@ -340,13 +360,23 @@ func (o *Orchestrator) startGapAnalysis(ctx context.Context, rc *RepoContext, sp
 		return
 	}
 
+	if err := o.checkRateLimit(); err != nil {
+		log.Printf("[%s] Rate limit active: %v", rc.Config.GithubRepo, err)
+		return
+	}
+
 	sessionTitle := fmt.Sprintf("Forge Gap Analysis: %d Specs (%s)", len(specFiles), rc.Config.GithubRepo)
 	sess, err := o.jules.CreateSession(ctx, sessionTitle, fullPrompt, rc.SourceName, "main")
 	if err != nil {
 		log.Printf("[%s] Session create error: %v", rc.Config.GithubRepo, err)
 		o.stats.RecordError()
+		// API error -> increase backoff
+		o.increaseBackoff()
 		return
 	}
+
+	o.resetBackoff()
+	o.recordSessionStart()
 
 	o.mu.Lock()
 	o.activeSessions[sess.Name] = &ActiveSession{
@@ -390,13 +420,23 @@ func (o *Orchestrator) startResolution(ctx context.Context, rc *RepoContext, pla
 		return
 	}
 
+	if err := o.checkRateLimit(); err != nil {
+		log.Printf("[%s] Rate limit active: %v", rc.Config.GithubRepo, err)
+		return
+	}
+
 	sessionTitle := fmt.Sprintf("Forge Resolution (%s)", rc.Config.GithubRepo)
 	sess, err := o.jules.CreateSession(ctx, sessionTitle, fullPrompt, rc.SourceName, "main")
 	if err != nil {
 		log.Printf("[%s] Session error: %v", rc.Config.GithubRepo, err)
 		o.stats.RecordError()
+		// API error -> increase backoff
+		o.increaseBackoff()
 		return
 	}
+
+	o.resetBackoff()
+	o.recordSessionStart()
 
 	o.mu.Lock()
 	o.activeSessions[sess.Name] = &ActiveSession{
@@ -597,6 +637,102 @@ func (o *Orchestrator) loadState() {
 	o.debugLog("Loaded state: %d active sessions, %d repos", len(o.activeSessions), len(state.Repositories))
 }
 
+
+func (o *Orchestrator) checkRateLimit() error {
+	if o.pm == nil {
+		return nil
+	}
+	state, err := o.pm.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load state: %w", err)
+	}
+
+	now := time.Now()
+	cutoff := now.Add(-24 * time.Hour)
+	var activeTimestamps []string
+
+	// Prune old timestamps
+	for _, tsStr := range state.SessionTimestamps {
+		ts, err := time.Parse(time.RFC3339, tsStr)
+		if err != nil {
+			continue // Skip malformed
+		}
+		if ts.After(cutoff) {
+			activeTimestamps = append(activeTimestamps, tsStr)
+		}
+	}
+
+	// Update state if we pruned
+	if len(activeTimestamps) != len(state.SessionTimestamps) {
+		state.SessionTimestamps = activeTimestamps
+		if err := o.pm.Save(state); err != nil {
+			log.Printf("Failed to save pruned timestamps: %v", err)
+		}
+	}
+
+	// Check global limit
+	if len(activeTimestamps) >= o.cfg.MaxSessionsPerDay {
+		o.increaseBackoff()
+		return fmt.Errorf("global rate limit reached (%d/%d in last 24h). Next slot available at %s", 
+			len(activeTimestamps), o.cfg.MaxSessionsPerDay, "unknown")
+	}
+	
+	// If we are passing the checks, we can reset backoff partialy or fully? 
+	// Actually, if we are NOT limited, we shouldn't necessarily reset immediately unless we successfully do an action.
+	// But simply *checking* and passing means we aren't limited. Limit errors cause backoff. Passing doesn't necessarily mean success yet. 
+	// I'll leave reset for successful operations.
+
+	return nil
+}
+
+func (o *Orchestrator) recordSessionStart() {
+	if o.pm == nil {
+		return
+	}
+	state, err := o.pm.Load()
+	if err != nil {
+		log.Printf("Failed to load state to record session: %v", err)
+		return
+	}
+
+	state.SessionTimestamps = append(state.SessionTimestamps, time.Now().Format(time.RFC3339))
+	if err := o.pm.Save(state); err != nil {
+		log.Printf("Failed to save session timestamp: %v", err)
+	}
+}
+
+func (o *Orchestrator) getBackoffDuration() time.Duration {
+	const baseDuration = 5 * time.Minute
+	if o.backoffMultiplier == 0 {
+		return 0
+	}
+	// Exponential backoff: 5m, 10m, 20m, 40m, 80m...
+	// Cap at some reasonable max, e.g., 6 hours
+	duration := baseDuration * time.Duration(1<<uint(o.backoffMultiplier-1))
+	maxDuration := 6 * time.Hour
+	if duration > maxDuration {
+		return maxDuration
+	}
+	return duration
+}
+
+func (o *Orchestrator) increaseBackoff() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.backoffMultiplier++
+	log.Printf("[Backpressure] Increasing backoff. Level: %d. Next sleep: %v", o.backoffMultiplier, o.getBackoffDuration())
+}
+
+func (o *Orchestrator) resetBackoff() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.backoffMultiplier > 0 {
+		o.backoffMultiplier = 0
+		log.Printf("[Backpressure] Backoff reset. Streaming resuming normally.")
+	}
+}
+
 func isTerminalState(state string) bool {
     return state == "COMPLETED" || state == "FAILED" || state == "CANCELLED" || state == "SUCCEEDED"
 }
+

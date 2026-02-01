@@ -29,6 +29,7 @@ type State struct {
 	LastRepo         string                     `json:"last_repo"`
 	LastSessionID    string                     `json:"last_session_id"`
 	LastPR           string                     `json:"last_pr"`
+	SessionTimestamps []string                  `json:"session_timestamps"` // RFC3339 timestamps of created sessions
 }
 
 // Manager handles saving and loading the service state.
