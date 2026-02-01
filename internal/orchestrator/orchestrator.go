@@ -187,8 +187,6 @@ func (o *Orchestrator) syncActiveSessions(ctx context.Context) {
 		o.increaseBackoff()
 		return
 	}
-	// Success -> reset backoff
-	o.resetBackoff()
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
