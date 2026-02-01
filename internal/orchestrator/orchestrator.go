@@ -1,0 +1,602 @@
+package orchestrator
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+	"sync"
+	"text/template"
+	"time"
+
+	"github.com/mortimus/forge/internal/clients/github"
+	"github.com/mortimus/forge/internal/clients/jules"
+	"github.com/mortimus/forge/internal/config"
+	"github.com/mortimus/forge/internal/persistence"
+	"github.com/mortimus/forge/internal/prompts"
+	"github.com/mortimus/forge/internal/stats"
+)
+
+// Orchestrator manages the lifecycle of automated coding sessions for multiple repositories.
+type Orchestrator struct {
+	cfg   *config.Config
+	jules jules.ClientInterface
+	stats *stats.Collector
+	pm    *persistence.Manager
+
+	// State
+	mu             sync.Mutex
+	activeSessions map[string]*ActiveSession // Key: SessionID
+	activeRepos    map[string]*RepoContext   // Key: RepoName (Owner/Repo)
+}
+
+// RepoContext holds the runtime state and configuration for a specific repository.
+type RepoContext struct {
+	Config     config.RepositoryConfig
+	GH         github.ClientInterface
+	SourceName string
+	DailyCount int
+	LastReset  time.Time
+
+	// Cache
+	LastSpecCheck time.Time
+	CachedSpecs   []string
+}
+
+// ActiveSession represents a currently running Jules session.
+type ActiveSession struct {
+	ID        string
+	Repo      string
+	Type      SessionType
+	PRURL     string
+	StartTime time.Time
+	State     string // Jules Session State
+	Handled   bool   // Whether completion has been handled
+}
+
+// SessionType defines the purpose of a Jules session.
+type SessionType string
+
+const (
+	TypeGapAnalysis SessionType = "GAP_ANALYSIS"
+	TypeResolution  SessionType = "RESOLUTION"
+)
+
+// New creates a new Orchestrator.
+func New(cfg *config.Config, jClient jules.ClientInterface, collector *stats.Collector, pm *persistence.Manager) *Orchestrator {
+	return &Orchestrator{
+		cfg:            cfg,
+		jules:          jClient,
+		stats:          collector,
+		pm:             pm,
+		activeSessions: make(map[string]*ActiveSession),
+		activeRepos:    make(map[string]*RepoContext),
+	}
+}
+
+// Run starts the main control loops.
+func (o *Orchestrator) Run(ctx context.Context) error {
+	// Initialize Repositories
+	for _, repoCfg := range o.cfg.Repositories {
+		gh, err := github.NewClient(ctx, repoCfg.GithubPAT, repoCfg.GithubRepo, o.cfg.CheckInterval())
+		if err != nil {
+			return fmt.Errorf("failed to create client for %s: %w", repoCfg.GithubRepo, err)
+		}
+        
+        sourceName, err := o.resolveSourceName(ctx, repoCfg.GithubRepo)
+        if err != nil {
+             log.Printf("Warning: Failed to resolve source for %s: %v. Skipping.", repoCfg.GithubRepo, err)
+             continue
+        }
+
+		o.activeRepos[repoCfg.GithubRepo] = &RepoContext{
+			Config:     repoCfg,
+			GH:         gh,
+			SourceName: sourceName,
+			LastReset:  time.Now(),
+		}
+	}
+
+	if len(o.activeRepos) == 0 {
+		return fmt.Errorf("no valid repositories configured")
+	}
+
+	// Load State (Global)
+	if o.pm != nil {
+		o.loadState()
+	}
+
+	// Start Global Monitor Loop
+	go o.monitorLoop(ctx)
+
+	// Start Repo Loops
+	var wg sync.WaitGroup
+	for _, rc := range o.activeRepos {
+		wg.Add(1)
+		go func(rc *RepoContext) {
+			defer wg.Done()
+			o.repoLoop(ctx, rc)
+		}(rc)
+	}
+
+	log.Printf("Orchestrator started with %d repositories.", len(o.activeRepos))
+	wg.Wait()
+    
+    // Final save on exit
+    o.saveState()
+	return nil
+}
+
+func (o *Orchestrator) monitorLoop(ctx context.Context) {
+	ticker := time.NewTicker(o.cfg.CheckInterval())
+	defer ticker.Stop()
+
+    o.syncActiveSessions(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			o.syncActiveSessions(ctx)
+		}
+	}
+}
+
+func (o *Orchestrator) repoLoop(ctx context.Context, rc *RepoContext) {
+	ticker := time.NewTicker(o.cfg.CheckInterval())
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			o.processRepo(ctx, rc)
+		}
+	}
+}
+
+// syncActiveSessions fetches all sessions from Jules and updates local state.
+func (o *Orchestrator) syncActiveSessions(ctx context.Context) {
+	sessions, err := o.jules.ListSessions(ctx)
+	if err != nil {
+		log.Printf("Error listing Jules sessions: %v", err)
+		return
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	existing := make(map[string]*ActiveSession)
+	for id, s := range o.activeSessions {
+		existing[id] = s
+	}
+
+	for _, s := range sessions {
+        var repoName string
+        
+        for rName, rc := range o.activeRepos {
+            if s.SourceContext.Source == rc.SourceName {
+                repoName = rName
+                break
+            }
+        }
+        
+        if repoName == "" {
+             for rName := range o.activeRepos {
+                 if strings.Contains(strings.ToLower(s.SourceContext.Source), strings.ToLower(rName)) {
+                     repoName = rName
+                     break
+                 }
+             }
+        }
+
+        if repoName == "" {
+            continue
+        }
+
+		if current, ok := existing[s.Name]; ok {
+			current.State = s.State
+		} else {
+             isTerminal := isTerminalState(s.State)
+             if !isTerminal {
+                  o.activeSessions[s.Name] = &ActiveSession{
+                      ID: s.Name,
+                      Repo: repoName,
+                      Type: TypeResolution, 
+                      StartTime: time.Now(),
+                      State: s.State,
+                  }
+             }
+		}
+	}
+    
+    o.saveStateInternal() // Call internal save (already locked) logic if separate, or rely on periodic save
+    // I need to implement saveState so it locks properly.
+}
+
+func (o *Orchestrator) processRepo(ctx context.Context, rc *RepoContext) {
+    if time.Since(rc.LastReset) > 24*time.Hour {
+         rc.DailyCount = 0
+         rc.LastReset = time.Now()
+    }
+    if rc.DailyCount >= o.cfg.MaxSessionsPerDay { 
+         return
+    }
+
+    o.mu.Lock()
+    var mySession *ActiveSession
+    for _, s := range o.activeSessions {
+        if s.Repo == rc.Config.GithubRepo {
+             mySession = s
+             break
+        }
+    }
+    o.mu.Unlock()
+
+    if mySession != nil {
+        if isTerminalState(mySession.State) {
+             o.mu.Lock()
+             if !mySession.Handled {
+                 mySession.Handled = true
+                 o.mu.Unlock()
+                 o.handleCompletion(ctx, rc, mySession)
+                 
+                 o.mu.Lock()
+                 delete(o.activeSessions, mySession.ID)
+             }
+             o.mu.Unlock()
+        }
+        return 
+    }
+
+    o.findNewWork(ctx, rc)
+}
+
+func (o *Orchestrator) findNewWork(ctx context.Context, rc *RepoContext) {
+	prs, err := rc.GH.ListOpenPullRequests(ctx)
+	if err != nil {
+		log.Printf("[%s] Failed to list open PRs: %v", rc.Config.GithubRepo, err)
+		return
+	}
+	if len(prs) > 0 {
+		// Log sparingly
+        // log.Printf("[%s] Blocking: PR #%d Open", rc.Config.GithubRepo, prs[0].GetNumber())
+		return
+	}
+
+	var files []string
+	if time.Since(rc.LastSpecCheck) < 5*time.Minute && rc.CachedSpecs != nil {
+		// Use Cache
+		files = rc.CachedSpecs
+	} else {
+		// Fetch new
+		var err error
+		files, err = rc.GH.ListFiles(ctx, rc.Config.SpecPath)
+		if err != nil {
+			o.debugLog("[%s] Failed to list specs: %v", rc.Config.GithubRepo, err)
+			return
+		}
+		// Update Cache
+		rc.CachedSpecs = files
+		rc.LastSpecCheck = time.Now()
+	}
+
+	var specPaths []string
+	for _, filename := range files {
+		if strings.HasSuffix(filename, ".md") {
+			path := fmt.Sprintf("%s/%s", rc.Config.SpecPath, filename)
+			specPaths = append(specPaths, path)
+		}
+	}
+
+	if len(specPaths) == 0 {
+		return
+	}
+
+	planPath := rc.Config.ImplPlanPath
+	planContent, err := rc.GH.GetFileContent(ctx, planPath)
+	planExists := err == nil && planContent != ""
+
+	if !planExists {
+		o.debugLog("[%s] Starting Gap Analysis.", rc.Config.GithubRepo)
+		o.startGapAnalysis(ctx, rc, specPaths)
+		return
+	}
+
+	if strings.Contains(planContent, "Status: Completed") {
+		o.startGapAnalysis(ctx, rc, specPaths)
+		return
+	}
+
+	o.startResolution(ctx, rc, planContent, specPaths)
+}
+
+func (o *Orchestrator) startGapAnalysis(ctx context.Context, rc *RepoContext, specFiles []string) {
+	tmplStr, err := prompts.GetTemplate("gap_analysis.md", rc.Config.GapAnalysisTemplatePath)
+	if err != nil {
+		log.Printf("[%s] Failed to load template: %v", rc.Config.GithubRepo, err)
+		return
+	}
+
+	data := struct {
+		SystemPrompt           string
+		AgentsMemory           string
+		SpecFiles              []string
+		ImplementationPlanPath string
+	}{
+		SystemPrompt:           o.getSystemPrompt(ctx, rc),
+		AgentsMemory:           o.getAgentsMemory(ctx, rc),
+		SpecFiles:              specFiles,
+		ImplementationPlanPath: rc.Config.ImplPlanPath,
+	}
+
+	fullPrompt, err := o.renderTemplate(tmplStr, data)
+	if err != nil {
+		log.Printf("[%s] Prompt render error: %v", rc.Config.GithubRepo, err)
+		return
+	}
+
+	sessionTitle := fmt.Sprintf("Forge Gap Analysis: %d Specs (%s)", len(specFiles), rc.Config.GithubRepo)
+	sess, err := o.jules.CreateSession(ctx, sessionTitle, fullPrompt, rc.SourceName, "main")
+	if err != nil {
+		log.Printf("[%s] Session create error: %v", rc.Config.GithubRepo, err)
+		o.stats.RecordError()
+		return
+	}
+
+	o.mu.Lock()
+	o.activeSessions[sess.Name] = &ActiveSession{
+		ID:        sess.Name,
+		Repo:      rc.Config.GithubRepo,
+		Type:      TypeGapAnalysis,
+		StartTime: time.Now(),
+		State:     "ACTIVE",
+	}
+	o.mu.Unlock()
+
+	o.stats.IncSessionCount()
+	o.saveState()
+	log.Printf("[%s] Started Gap Analysis %s", rc.Config.GithubRepo, sess.Name)
+}
+
+func (o *Orchestrator) startResolution(ctx context.Context, rc *RepoContext, plan string, specFiles []string) {
+	tmplStr, err := prompts.GetTemplate("resolution.md", rc.Config.ResolutionTemplatePath)
+	if err != nil {
+		log.Printf("[%s] Template error: %v", rc.Config.GithubRepo, err)
+		return
+	}
+
+	data := struct {
+		SystemPrompt           string
+		AgentsMemory           string
+		PlanContent            string
+		SpecFiles              []string
+		ImplementationPlanPath string
+	}{
+		SystemPrompt:           o.getSystemPrompt(ctx, rc),
+		AgentsMemory:           o.getAgentsMemory(ctx, rc),
+		PlanContent:            plan,
+		SpecFiles:              specFiles,
+		ImplementationPlanPath: rc.Config.ImplPlanPath,
+	}
+
+	fullPrompt, err := o.renderTemplate(tmplStr, data)
+	if err != nil {
+		log.Printf("[%s] Render error: %v", rc.Config.GithubRepo, err)
+		return
+	}
+
+	sessionTitle := fmt.Sprintf("Forge Resolution (%s)", rc.Config.GithubRepo)
+	sess, err := o.jules.CreateSession(ctx, sessionTitle, fullPrompt, rc.SourceName, "main")
+	if err != nil {
+		log.Printf("[%s] Session error: %v", rc.Config.GithubRepo, err)
+		o.stats.RecordError()
+		return
+	}
+
+	o.mu.Lock()
+	o.activeSessions[sess.Name] = &ActiveSession{
+		ID:        sess.Name,
+		Repo:      rc.Config.GithubRepo,
+		Type:      TypeResolution,
+		StartTime: time.Now(),
+		State:     "ACTIVE",
+	}
+	o.mu.Unlock()
+
+	o.stats.IncSessionCount()
+	o.saveState()
+	log.Printf("[%s] Started Resolution %s", rc.Config.GithubRepo, sess.Name)
+}
+
+func (o *Orchestrator) handleCompletion(ctx context.Context, rc *RepoContext, sess *ActiveSession) {
+	log.Printf("[%s] Completing session %s (%s)", rc.Config.GithubRepo, sess.ID, sess.State)
+
+	fullSess, err := o.jules.GetSession(ctx, sess.ID)
+	if err != nil {
+		log.Printf("Error fetching session %s: %v", sess.ID, err)
+		return
+	}
+
+	var prOutput *jules.PullRequestOutput
+	for _, output := range fullSess.Outputs {
+		if output.PullRequest != nil {
+			prOutput = output.PullRequest
+			break
+		}
+	}
+
+	if prOutput == nil {
+		if sess.State == "FAILED" && rc.Config.ImplPlanPath != "" {
+			 log.Printf("[%s] Session failed. Cleaning plan.", rc.Config.GithubRepo)
+			 rc.GH.DeleteFile(ctx, rc.Config.ImplPlanPath, "Cleanup after failure")
+		}
+		return
+	}
+	
+	sess.PRURL = prOutput.URL
+	o.stats.SetLastPR(prOutput.URL)
+	rc.DailyCount++ 
+	
+	parts := strings.Split(prOutput.URL, "/")
+	prNumStr := parts[len(parts)-1]
+	var prNum int
+	fmt.Sscanf(prNumStr, "%d", &prNum)
+
+	if !rc.Config.AutoMerge {
+		log.Printf("[%s] PR %d created (Auto-Merge off).", rc.Config.GithubRepo, prNum)
+		o.stats.IncPRMerged()
+		return
+	}
+
+	// Fetch PR for branch name
+	githubPR, _ := rc.GH.GetPR(ctx, prNum)
+
+	if err := rc.GH.MergePR(ctx, prNum); err != nil {
+		log.Printf("[%s] Merge failed for PR %d: %v", rc.Config.GithubRepo, prNum, err)
+		o.stats.RecordError()
+		return
+	}
+
+	o.stats.IncPRMerged()
+	log.Printf("[%s] Merged PR %d", rc.Config.GithubRepo, prNum)
+
+	if githubPR != nil && githubPR.Head != nil && githubPR.Head.Ref != nil {
+		branch := *githubPR.Head.Ref
+		if branch != "main" && branch != "master" {
+			rc.GH.DeleteBranch(ctx, branch)
+		}
+	}
+
+	if rc.Config.ImplPlanPath != "" && sess.Type == TypeResolution {
+		rc.GH.DeleteFile(ctx, rc.Config.ImplPlanPath, "Plan completed")
+	}
+}
+
+func (o *Orchestrator) resolveSourceName(ctx context.Context, repoName string) (string, error) {
+	sources, err := o.jules.ListSources(ctx)
+	if err != nil {
+		return "", err
+	}
+	targetRepo := strings.ToLower(repoName)
+	for _, s := range sources {
+		matchID := strings.ToLower(fmt.Sprintf("%s/%s", s.GithubRepo.Owner, s.GithubRepo.Repo))
+		if strings.Contains(strings.ToLower(s.Name), targetRepo) || strings.HasSuffix(matchID, targetRepo) {
+			return s.Name, nil
+		}
+	}
+	return "", fmt.Errorf("source not found for %s", repoName)
+}
+
+func (o *Orchestrator) getAgentsMemory(ctx context.Context, rc *RepoContext) string {
+	content, err := rc.GH.GetFileContent(ctx, rc.Config.AgentsPromptPath)
+	if err != nil {
+		return "No memory file found."
+	}
+	return content
+}
+
+func (o *Orchestrator) getSystemPrompt(ctx context.Context, rc *RepoContext) string {
+    if content, err := rc.GH.GetFileContent(ctx, rc.Config.SystemPromptPath); err == nil {
+        return content
+    }
+    if content, err := os.ReadFile(rc.Config.SystemPromptPath); err == nil {
+		return string(content)
+	}
+	return ""
+}
+
+func (o *Orchestrator) renderTemplate(tmplStr string, data interface{}) (string, error) {
+	tmpl, err := template.New("prompt").Parse(tmplStr)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func (o *Orchestrator) debugLog(format string, args ...interface{}) {
+	if o.cfg.Debug {
+		log.Printf("[DEBUG] "+format, args...)
+	}
+}
+
+func (o *Orchestrator) saveState() {
+	if o.pm == nil {
+		return
+	}
+	o.mu.Lock()
+    o.saveStateInternal()
+	o.mu.Unlock()
+}
+
+func (o *Orchestrator) saveStateInternal() {
+	state := &persistence.State{
+		LifetimeSessions: o.stats.GetTotalSessions(),
+		ActiveSessions:   make(map[string]persistence.SessionMetadata),
+		Repositories:     make(map[string]persistence.RepoState),
+		LastPR:           o.stats.GetLastPR(),
+	}
+
+	for _, rc := range o.activeRepos {
+		state.Repositories[rc.Config.GithubRepo] = persistence.RepoState{
+			DailyCount: rc.DailyCount,
+			LastReset:  rc.LastReset.Format(time.RFC3339),
+		}
+	}
+	for id, sess := range o.activeSessions {
+		state.ActiveSessions[id] = persistence.SessionMetadata{
+			ID:        sess.ID,
+			Repo:      sess.Repo,
+			Type:      string(sess.Type),
+			PRURL:     sess.PRURL,
+			StartTime: sess.StartTime.Format(time.RFC3339),
+		}
+	}
+	if err := o.pm.Save(state); err != nil {
+		log.Printf("[ERROR] State save failed: %v", err)
+	}
+}
+
+func (o *Orchestrator) loadState() {
+	state, err := o.pm.Load()
+	if err != nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	for id, meta := range state.ActiveSessions {
+		startTime, _ := time.Parse(time.RFC3339, meta.StartTime)
+		o.activeSessions[id] = &ActiveSession{
+			ID:        meta.ID,
+			Repo:      meta.Repo,
+			Type:      SessionType(meta.Type),
+			PRURL:     meta.PRURL,
+			StartTime: startTime,
+		}
+	}
+	for alias, repoState := range state.Repositories {
+		if rc, ok := o.activeRepos[alias]; ok {
+			rc.DailyCount = repoState.DailyCount
+			if t, err := time.Parse(time.RFC3339, repoState.LastReset); err == nil {
+				rc.LastReset = t
+			}
+		}
+	}
+
+	o.stats.SetTotalSessions(state.LifetimeSessions)
+	o.stats.SetLastPR(state.LastPR)
+	o.debugLog("Loaded state: %d active sessions, %d repos", len(o.activeSessions), len(state.Repositories))
+}
+
+func isTerminalState(state string) bool {
+    return state == "COMPLETED" || state == "FAILED" || state == "CANCELLED" || state == "SUCCEEDED"
+}

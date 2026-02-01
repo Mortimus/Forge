@@ -1,0 +1,15 @@
+[Unit]
+Description=Forge Orchestrator
+After=network.target
+
+[Service]
+Type=simple
+User=forge
+Group=forge
+WorkingDirectory=/opt/forge
+ExecStart=/opt/forge/forge -config /opt/forge/config.yaml
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

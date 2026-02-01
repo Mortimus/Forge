@@ -1,0 +1,21 @@
+# Forge Configuration
+
+# Jules Configuration
+jules_api_key: "YOUR_JULES_API_KEY"
+max_sessions_per_day: 100
+debug: false
+check_interval_seconds: 60
+state_file_path: "forge_state.json"
+
+# Repository Configuration
+repositories:
+  - github_repo: "Owner/Repo1"
+    github_pat: "YOUR_GITHUB_PAT"
+    auto_merge: true
+    agents_prompt_path: "AGENTS.md"
+    impl_plan_path: "IMPLEMENTATION_PLAN.md"
+    spec_path: "docs/spec"
+    system_prompt_path: "SYSTEM_PROMPT.md"
+    # Optional template overrides
+    # gap_analysis_template_path: "templates/gap_analysis.md"
+    # resolution_template_path: "templates/resolution.md"
