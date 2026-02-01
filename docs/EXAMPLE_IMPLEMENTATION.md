@@ -37,32 +37,29 @@ sudo chmod 750 /opt/forge
 Copy the example service file and edit it.
 
 ```bash
-sudo cp deployments/forge.service /etc/systemd/system/
+sudo cp deployments/forge.service.example /etc/systemd/system/forge.service
 sudo vim /etc/systemd/system/forge.service
 ```
 
-**Crucial Configuration**:
-You MUST set these variables in the `[Service]` section:
+### 4. Configuration
+Forge now uses a YAML configuration file. Create `/opt/forge/config.yaml`:
 
-```ini
-[Service]
-# ...
-Environment="JULES_API_KEY=your_actual_google_key"
-Environment="GITHUB_PAT=your_github_personal_access_token"
-Environment="GITHUB_REPO=my-username/my-new-project"
-Environment="AUTO_MERGE=true"
+```yaml
+jules_api_key: "your_actual_google_key"
+max_sessions_per_day: 100
+check_interval_seconds: 60
+state_file_path: "forge_state.json"
+debug: false
 
-# Optional Configuration (Defaults)
-Environment="MAX_JULES_SESSIONS=1"
-Environment="MAX_SESSIONS_PER_DAY=100"
-Environment="CHECK_INTERVAL_SECONDS=60"
-Environment="SPEC_PATH=docs/spec"
-Environment="IMPL_PLAN_PATH=IMPLEMENTATION_PLAN.md"
-Environment="AGENTS_PROMPT_PATH=AGENTS.md"
-Environment="SYSTEM_PROMPT_PATH=SYSTEM_PROMPT.md"
+repositories:
+  - github_repo: "my-username/my-new-project"
+    github_pat: "your_github_personal_access_token"
+    auto_merge: true
+    # Optional overrides
+    # gap_analysis_template_path: "/opt/forge/templates/gap_analysis.md"
 ```
 
-### 4. Start Forge
+### 5. Start Forge
 Enable the service so it starts on boot.
 
 ```bash
@@ -154,14 +151,14 @@ cp /home/user/forge_source/examples/templates/*.md /opt/forge/templates/
 Edit `/opt/forge/templates/gap_analysis.md` to change how Forge plans. For example, you could enforce that every plan must include a specific security checklist.
 
 ### 3. Configure Service
-Update `/etc/systemd/system/forge.service` to tell Forge where to find the new files.
+Update `/opt/forge/config.yaml` to tell Forge where to find the new files.
 
-```ini
-[Service]
-# ...
-Environment="GAP_ANALYSIS_TEMPLATE_PATH=templates/gap_analysis.md"
-Environment="RESOLUTION_TEMPLATE_PATH=templates/resolution.md"
-Environment="AUTO_MERGE=false"
+```yaml
+repositories:
+  - github_repo: "my-username/my-new-project"
+    # ...
+    gap_analysis_template_path: "templates/gap_analysis.md"
+    resolution_template_path: "templates/resolution.md"
 ```
 
 ### 4. Restart

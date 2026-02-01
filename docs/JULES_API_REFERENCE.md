@@ -76,3 +76,6 @@ If `requirePlanApproval` is set (default `false` via API?), you must approve man
 - Forge uses `automationMode: AUTO_CREATE_PR`.
 - Forge needs to find the correct valid `source` name (e.g., `sources/github/mortimus/Forge`) before creating a session, or construct it if it follows a standard pattern.
 - Forge monitors the session via polling to see when `outputs.pullRequest` appears.
+
+## 5. Changelog
+- **v1alpha**: Initial release. Used by Forge v0.1+.
