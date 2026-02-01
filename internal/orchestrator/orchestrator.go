@@ -80,7 +80,7 @@ func New(cfg *config.Config, jClient jules.ClientInterface, collector *stats.Col
 func (o *Orchestrator) Run(ctx context.Context) error {
 	// Initialize Repositories
 	for _, repoCfg := range o.cfg.Repositories {
-		gh, err := github.NewClient(ctx, repoCfg.GithubPAT, repoCfg.GithubRepo, o.cfg.CheckInterval())
+		gh, err := github.NewClient(ctx, repoCfg.GithubPAT, repoCfg.GithubRepo, 1*time.Second)
 		if err != nil {
 			return fmt.Errorf("failed to create client for %s: %w", repoCfg.GithubRepo, err)
 		}

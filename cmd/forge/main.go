@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"flag"
 	"fmt"
@@ -90,7 +91,7 @@ func run(ctx context.Context, cfg *config.Config, configPath string) error {
 	}()
 
 
-	julesClient := jules.NewClient(cfg.JulesAPIKey, cfg.CheckInterval())
+	julesClient := jules.NewClient(cfg.JulesAPIKey, 1*time.Second)
 	statsCollector := stats.New()
 	persistenceManager := persistence.NewManager(cfg.StateFilePath)
 

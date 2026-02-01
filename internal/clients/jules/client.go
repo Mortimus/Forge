@@ -25,7 +25,7 @@ type Client struct {
 // NewClient creates a new Jules API client with the provided API key.
 func NewClient(apiKey string, interval time.Duration) *Client {
 	if interval == 0 {
-		interval = 60 * time.Second
+		interval = 1 * time.Second
 	}
 	return &Client{
 		BaseURL: DefaultBaseURL,

@@ -25,7 +25,7 @@ type Client struct {
 // repoFullName is the repository in "owner/repo" format.
 func NewClient(ctx context.Context, token, repoFullName string, interval time.Duration) (*Client, error) {
 	if interval == 0 {
-		interval = 60 * time.Second
+		interval = 1 * time.Second
 	}
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
