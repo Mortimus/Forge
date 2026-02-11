@@ -533,6 +533,10 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, rc *RepoContext, se
 	log.Printf("[%s] Completing session %s (%s)", rc.Config.GithubRepo, sess.ID, sess.State)
 
 	defer func() {
+		if !o.cfg.AutoDeleteSessions {
+			o.debugLog("[%s] Auto-delete sessions is disabled. Skipping deletion of session %s.", rc.Config.GithubRepo, sess.ID)
+			return
+		}
 		log.Printf("[%s] Deleting session %s", rc.Config.GithubRepo, sess.ID)
 		if err := o.jules.DeleteSession(ctx, sess.ID); err != nil {
 			log.Printf("[%s] Failed to delete session %s: %v", rc.Config.GithubRepo, sess.ID, err)

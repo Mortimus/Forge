@@ -159,34 +159,56 @@ func TestGlobalRateLimit(t *testing.T) {
 	}
 }
 func TestHandleCompletion_Cleanup(t *testing.T) {
-	cfg := createTestConfig()
-	jMock := &mocks.JulesMock{}
-	ghMock := &mocks.GithubMock{}
-	stats := stats.New()
-	o := New(cfg, jMock, stats, nil)
-
-	rc := &RepoContext{
-		Config: cfg.Repositories[0],
-		GH:     ghMock,
+	tests := []struct {
+		name               string
+		autoDeleteSessions bool
+		wantDeleted        bool
+	}{
+		{
+			name:               "AutoDelete Disabled (Default)",
+			autoDeleteSessions: false,
+			wantDeleted:        false,
+		},
+		{
+			name:               "AutoDelete Enabled",
+			autoDeleteSessions: true,
+			wantDeleted:        true,
+		},
 	}
 
-	sessionDeleted := false
-	jMock.DeleteSessionFunc = func(ctx context.Context, sessionName string) error {
-		if sessionName == "session1" {
-			sessionDeleted = true
-		}
-		return nil
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := createTestConfig()
+			cfg.AutoDeleteSessions = tt.autoDeleteSessions
+			jMock := &mocks.JulesMock{}
+			ghMock := &mocks.GithubMock{}
+			stats := stats.New()
+			o := New(cfg, jMock, stats, nil)
 
-	jMock.GetSessionFunc = func(ctx context.Context, sessionName string) (*jules.Session, error) {
-		return &jules.Session{Name: "session1", State: "SUCCEEDED"}, nil
-	}
+			rc := &RepoContext{
+				Config: cfg.Repositories[0],
+				GH:     ghMock,
+			}
 
-	sess := &ActiveSession{ID: "session1", State: "SUCCEEDED"}
-	o.handleCompletion(context.Background(), rc, sess)
+			sessionDeleted := false
+			jMock.DeleteSessionFunc = func(ctx context.Context, sessionName string) error {
+				if sessionName == "session1" {
+					sessionDeleted = true
+				}
+				return nil
+			}
 
-	if !sessionDeleted {
-		t.Error("Session should have been deleted during completion")
+			jMock.GetSessionFunc = func(ctx context.Context, sessionName string) (*jules.Session, error) {
+				return &jules.Session{Name: "session1", State: "SUCCEEDED"}, nil
+			}
+
+			sess := &ActiveSession{ID: "session1", State: "SUCCEEDED"}
+			o.handleCompletion(context.Background(), rc, sess)
+
+			if sessionDeleted != tt.wantDeleted {
+				t.Errorf("sessionDeleted = %v, want %v", sessionDeleted, tt.wantDeleted)
+			}
+		})
 	}
 }
 

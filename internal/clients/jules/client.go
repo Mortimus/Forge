@@ -270,7 +270,7 @@ func (c *Client) SendMessage(ctx context.Context, sessionName, message string) e
 	// sessionName is full resource name e.g. "sessions/123"
 	path := fmt.Sprintf("/v1alpha/%s:sendMessage", strings.TrimPrefix(sessionName, "/"))
 	req := struct {
-		Message string `json:"message"`
+		Message string `json:"prompt"`
 	}{
 		Message: message,
 	}

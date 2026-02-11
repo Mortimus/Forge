@@ -32,6 +32,7 @@ type Config struct {
 	Debug                bool               `yaml:"debug"`
 	CheckIntervalSeconds int                `yaml:"check_interval_seconds"`
 	StateFilePath        string             `yaml:"state_file_path"`
+	AutoDeleteSessions   bool               `yaml:"auto_delete_sessions"`
 	Repositories         []RepositoryConfig `yaml:"repositories"`
 }
 
