@@ -48,11 +48,11 @@ type RepoContext struct {
 
 // ActiveSession represents a currently running Jules session.
 type ActiveSession struct {
-	ID        string
-	Repo      string
-	Type      SessionType
-	PRURL     string
-	StartTime time.Time
+	ID                 string
+	Repo               string
+	Type               SessionType
+	PRURL              string
+	StartTime          time.Time
 	State              string // Jules Session State
 	Handled            bool   // Whether completion has been handled
 	LastAutomatedState string // Last state where an automated action was taken
@@ -86,12 +86,12 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to create client for %s: %w", repoCfg.GithubRepo, err)
 		}
-        
-        sourceName, err := o.resolveSourceName(ctx, repoCfg.GithubRepo)
-        if err != nil {
-             log.Printf("Warning: Failed to resolve source for %s: %v. Skipping.", repoCfg.GithubRepo, err)
-             continue
-        }
+
+		sourceName, err := o.resolveSourceName(ctx, repoCfg.GithubRepo)
+		if err != nil {
+			log.Printf("Warning: Failed to resolve source for %s: %v. Skipping.", repoCfg.GithubRepo, err)
+			continue
+		}
 
 		o.activeRepos[repoCfg.GithubRepo] = &RepoContext{
 			Config:     repoCfg,
@@ -126,9 +126,9 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 
 	log.Printf("Orchestrator started with %d repositories.", len(o.activeRepos))
 	wg.Wait()
-    
-    // Final save on exit
-    o.saveState()
+
+	// Final save on exit
+	o.saveState()
 	return nil
 }
 
@@ -136,9 +136,9 @@ func (o *Orchestrator) monitorLoop(ctx context.Context) {
 	ticker := time.NewTicker(o.cfg.CheckInterval())
 	defer ticker.Stop()
 
-    o.debugLog("[MONITOR] Initial session sync...")
-    o.syncActiveSessions(ctx)
-    o.debugLog("[MONITOR] Initial sync complete. Waiting %v until next check.", o.cfg.CheckInterval())
+	o.debugLog("[MONITOR] Initial session sync...")
+	o.syncActiveSessions(ctx)
+	o.debugLog("[MONITOR] Initial sync complete. Waiting %v until next check.", o.cfg.CheckInterval())
 
 	for {
 		select {
@@ -213,28 +213,28 @@ func (o *Orchestrator) syncActiveSessions(ctx context.Context) {
 	}
 
 	for _, s := range sessions {
-        var repoName string
-        
-        for rName, rc := range o.activeRepos {
-            if s.SourceContext.Source == rc.SourceName {
-                repoName = rName
-                break
-            }
-        }
-        
-        if repoName == "" {
-             for rName := range o.activeRepos {
-                 if strings.Contains(strings.ToLower(s.SourceContext.Source), strings.ToLower(rName)) {
-                     repoName = rName
-                     break
-                 }
-             }
-        }
+		var repoName string
 
-        if repoName == "" {
-            o.debugLog("[SYNC] Skipping session %s: No matching repository found for source '%s'", s.Name, s.SourceContext.Source)
-            continue
-        }
+		for rName, rc := range o.activeRepos {
+			if s.SourceContext.Source == rc.SourceName {
+				repoName = rName
+				break
+			}
+		}
+
+		if repoName == "" {
+			for rName := range o.activeRepos {
+				if strings.Contains(strings.ToLower(s.SourceContext.Source), strings.ToLower(rName)) {
+					repoName = rName
+					break
+				}
+			}
+		}
+
+		if repoName == "" {
+			o.debugLog("[SYNC] Skipping session %s: No matching repository found for source '%s'", s.Name, s.SourceContext.Source)
+			continue
+		}
 
 		if current, ok := existing[s.Name]; ok {
 			if current.State != s.State {
@@ -242,69 +242,69 @@ func (o *Orchestrator) syncActiveSessions(ctx context.Context) {
 				current.State = s.State
 			}
 		} else {
-             isTerminal := isTerminalState(s.State)
-             if !isTerminal {
-                  o.debugLog("[SYNC] Adding new active session %s (State: %s, Repo: %s)", s.Name, s.State, repoName)
-                  o.activeSessions[s.Name] = &ActiveSession{
-                      ID: s.Name,
-                      Repo: repoName,
-                      Type: TypeResolution, 
-                      StartTime: time.Now(),
-                      State: s.State,
-                  }
-             } else {
-                 o.debugLog("[SYNC] Skipping new session %s in terminal state %s", s.Name, s.State)
-             }
+			isTerminal := isTerminalState(s.State)
+			if !isTerminal {
+				o.debugLog("[SYNC] Adding new active session %s (State: %s, Repo: %s)", s.Name, s.State, repoName)
+				o.activeSessions[s.Name] = &ActiveSession{
+					ID:        s.Name,
+					Repo:      repoName,
+					Type:      TypeResolution,
+					StartTime: time.Now(),
+					State:     s.State,
+				}
+			} else {
+				o.debugLog("[SYNC] Skipping new session %s in terminal state %s", s.Name, s.State)
+			}
 		}
 	}
-    
-    o.debugLog("[SYNC] State synchronized: %d active sessions", len(o.activeSessions))
-    o.saveStateInternal()
+
+	o.debugLog("[SYNC] State synchronized: %d active sessions", len(o.activeSessions))
+	o.saveStateInternal()
 }
 
 func (o *Orchestrator) processRepo(ctx context.Context, rc *RepoContext) {
 	if time.Since(rc.LastReset) > 24*time.Hour {
-         rc.DailyCount = 0
-         rc.LastReset = time.Now()
-         o.debugLog("[%s] Daily count reset to 0.", rc.Config.GithubRepo)
-    }
+		rc.DailyCount = 0
+		rc.LastReset = time.Now()
+		o.debugLog("[%s] Daily count reset to 0.", rc.Config.GithubRepo)
+	}
 
-    o.mu.Lock()
-    var mySession *ActiveSession
-    for _, s := range o.activeSessions {
-        if s.Repo == rc.Config.GithubRepo {
-             mySession = s
-             break
-        }
-    }
-    o.mu.Unlock()
+	o.mu.Lock()
+	var mySession *ActiveSession
+	for _, s := range o.activeSessions {
+		if s.Repo == rc.Config.GithubRepo {
+			mySession = s
+			break
+		}
+	}
+	o.mu.Unlock()
 
-    if mySession != nil {
-        o.debugLog("[%s] Active session %s found (State: %s). Processing...", rc.Config.GithubRepo, mySession.ID, mySession.State)
-        if isTerminalState(mySession.State) {
-             o.mu.Lock()
-             if !mySession.Handled {
-                 mySession.Handled = true
-                 o.mu.Unlock()
-                 o.handleCompletion(ctx, rc, mySession)
-                 
-                 o.mu.Lock()
-                 delete(o.activeSessions, mySession.ID)
-                 o.debugLog("[%s] Removed completed session %s from active sessions.", rc.Config.GithubRepo, mySession.ID)
-             } else {
-                 o.debugLog("[%s] Session %s is in terminal state %s but already handled. Removing.", rc.Config.GithubRepo, mySession.ID, mySession.State)
-                 delete(o.activeSessions, mySession.ID)
-             }
-             o.mu.Unlock()
-             return
-        }
-        
-        // Automated Interactions for Non-Terminal States
-        o.handleAutomatedInteractions(ctx, rc, mySession)
-        return 
-    }
+	if mySession != nil {
+		o.debugLog("[%s] Active session %s found (State: %s). Processing...", rc.Config.GithubRepo, mySession.ID, mySession.State)
+		if isTerminalState(mySession.State) {
+			o.mu.Lock()
+			if !mySession.Handled {
+				mySession.Handled = true
+				o.mu.Unlock()
+				o.handleCompletion(ctx, rc, mySession)
 
-    o.findNewWork(ctx, rc)
+				o.mu.Lock()
+				delete(o.activeSessions, mySession.ID)
+				o.debugLog("[%s] Removed completed session %s from active sessions.", rc.Config.GithubRepo, mySession.ID)
+			} else {
+				o.debugLog("[%s] Session %s is in terminal state %s but already handled. Removing.", rc.Config.GithubRepo, mySession.ID, mySession.State)
+				delete(o.activeSessions, mySession.ID)
+			}
+			o.mu.Unlock()
+			return
+		}
+
+		// Automated Interactions for Non-Terminal States
+		o.handleAutomatedInteractions(ctx, rc, mySession)
+		return
+	}
+
+	o.findNewWork(ctx, rc)
 }
 
 func (o *Orchestrator) handleAutomatedInteractions(ctx context.Context, rc *RepoContext, sess *ActiveSession) {
@@ -331,7 +331,7 @@ func (o *Orchestrator) handleAutomatedInteractions(ctx context.Context, rc *Repo
 
 	case "AWAITING_USER_FEEDBACK":
 		log.Printf("[%s] Automatically sending 'best judgement' to session %s", rc.Config.GithubRepo, sess.ID)
-		msg := "Use your best judgement to continue working on the task and keep our automation up and running."
+		msg := "Use your best judgement"
 		if err := o.jules.SendMessage(ctx, sess.ID, msg); err != nil {
 			log.Printf("[%s] Failed to send message: %v", rc.Config.GithubRepo, err)
 			return
@@ -559,16 +559,16 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, rc *RepoContext, se
 
 	if prOutput == nil {
 		if sess.State == "FAILED" && rc.Config.ImplPlanPath != "" {
-			 log.Printf("[%s] Session failed. Cleaning plan.", rc.Config.GithubRepo)
-			 rc.GH.DeleteFile(ctx, rc.Config.ImplPlanPath, "Cleanup after failure")
+			log.Printf("[%s] Session failed. Cleaning plan.", rc.Config.GithubRepo)
+			rc.GH.DeleteFile(ctx, rc.Config.ImplPlanPath, "Cleanup after failure")
 		}
 		return
 	}
-	
+
 	sess.PRURL = prOutput.URL
 	o.stats.SetLastPR(prOutput.URL)
-	rc.DailyCount++ 
-	
+	rc.DailyCount++
+
 	parts := strings.Split(prOutput.URL, "/")
 	prNumStr := parts[len(parts)-1]
 	var prNum int
@@ -628,10 +628,10 @@ func (o *Orchestrator) getAgentsMemory(ctx context.Context, rc *RepoContext) str
 }
 
 func (o *Orchestrator) getSystemPrompt(ctx context.Context, rc *RepoContext) string {
-    if content, err := rc.GH.GetFileContent(ctx, rc.Config.SystemPromptPath); err == nil {
-        return content
-    }
-    if content, err := os.ReadFile(rc.Config.SystemPromptPath); err == nil {
+	if content, err := rc.GH.GetFileContent(ctx, rc.Config.SystemPromptPath); err == nil {
+		return content
+	}
+	if content, err := os.ReadFile(rc.Config.SystemPromptPath); err == nil {
 		return string(content)
 	}
 	return ""
@@ -660,7 +660,7 @@ func (o *Orchestrator) saveState() {
 		return
 	}
 	o.mu.Lock()
-    o.saveStateInternal()
+	o.saveStateInternal()
 	o.mu.Unlock()
 }
 
@@ -724,7 +724,6 @@ func (o *Orchestrator) loadState() {
 	o.debugLog("Loaded state: %d active sessions, %d repos", len(o.activeSessions), len(state.Repositories))
 }
 
-
 func (o *Orchestrator) checkRateLimit() error {
 	if o.pm == nil {
 		return nil
@@ -760,13 +759,13 @@ func (o *Orchestrator) checkRateLimit() error {
 	// Check global limit
 	if len(activeTimestamps) >= o.cfg.MaxSessionsPerDay {
 		o.increaseBackoff()
-		return fmt.Errorf("global rate limit reached (%d/%d in last 24h). Next slot available at %s", 
+		return fmt.Errorf("global rate limit reached (%d/%d in last 24h). Next slot available at %s",
 			len(activeTimestamps), o.cfg.MaxSessionsPerDay, "unknown")
 	}
-	
-	// If we are passing the checks, we can reset backoff partialy or fully? 
+
+	// If we are passing the checks, we can reset backoff partialy or fully?
 	// Actually, if we are NOT limited, we shouldn't necessarily reset immediately unless we successfully do an action.
-	// But simply *checking* and passing means we aren't limited. Limit errors cause backoff. Passing doesn't necessarily mean success yet. 
+	// But simply *checking* and passing means we aren't limited. Limit errors cause backoff. Passing doesn't necessarily mean success yet.
 	// I'll leave reset for successful operations.
 
 	return nil
@@ -820,6 +819,5 @@ func (o *Orchestrator) resetBackoff() {
 }
 
 func isTerminalState(state string) bool {
-    return state == "COMPLETED" || state == "FAILED" || state == "CANCELLED" || state == "SUCCEEDED"
+	return state == "COMPLETED" || state == "FAILED" || state == "CANCELLED" || state == "SUCCEEDED"
 }
-
