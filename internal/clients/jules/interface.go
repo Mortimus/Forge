@@ -9,4 +9,6 @@ type ClientInterface interface {
 	CreateSession(ctx context.Context, title, prompt, sourceName, branch string) (*Session, error)
 	GetSession(ctx context.Context, sessionName string) (*Session, error)
 	ListSessions(ctx context.Context) ([]Session, error)
+	SendMessage(ctx context.Context, sessionName, message string) error
+	ApprovePlan(ctx context.Context, sessionName string) error
 }

@@ -17,7 +17,7 @@ type Client struct {
 	client  *github.Client
 	owner   string
 	repo    string
-	limiter *time.Ticker
+	bp      *Backpressure
 }
 
 // NewClient creates a new GitHub client for specific repository.
@@ -42,17 +42,12 @@ func NewClient(ctx context.Context, token, repoFullName string, interval time.Du
 		client:  ghClient,
 		owner:   parts[0],
 		repo:    parts[1],
-		limiter: time.NewTicker(interval),
+		bp:      NewBackpressure(interval),
 	}, nil
 }
 
 func (c *Client) wait(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-c.limiter.C:
-		return nil
-	}
+	return c.bp.Wait(ctx)
 }
 
 // ListOpenIssuesByLabel returns all open issues with the given label
@@ -69,6 +64,7 @@ func (c *Client) ListOpenIssuesByLabel(ctx context.Context, label string) ([]*gi
 			return nil, err
 		}
 		issues, resp, err := c.client.Issues.ListByRepo(ctx, c.owner, c.repo, opts)
+		c.bp.HandleResponse(resp, err)
 		if err != nil {
 			return nil, err
 		}
@@ -93,6 +89,7 @@ func (c *Client) ListOpenPullRequests(ctx context.Context) ([]*github.PullReques
 			return nil, err
 		}
 		prs, resp, err := c.client.PullRequests.List(ctx, c.owner, c.repo, opts)
+		c.bp.HandleResponse(resp, err)
 		if err != nil {
 			return nil, err
 		}
@@ -115,7 +112,8 @@ func (c *Client) CreateIssue(ctx context.Context, title, body string, labels []s
 		Body:   &body,
 		Labels: &labels,
 	}
-	issue, _, err := c.client.Issues.Create(ctx, c.owner, c.repo, req)
+	issue, resp, err := c.client.Issues.Create(ctx, c.owner, c.repo, req)
+	c.bp.HandleResponse(resp, err)
 	return issue, err
 }
 
@@ -124,7 +122,8 @@ func (c *Client) AddLabel(ctx context.Context, number int, labels []string) erro
 	if err := c.wait(ctx); err != nil {
 		return err
 	}
-	_, _, err := c.client.Issues.AddLabelsToIssue(ctx, c.owner, c.repo, number, labels)
+	_, resp, err := c.client.Issues.AddLabelsToIssue(ctx, c.owner, c.repo, number, labels)
+	c.bp.HandleResponse(resp, err)
 	return err
 }
 
@@ -135,7 +134,8 @@ func (c *Client) SpecHasGapAnalysis(ctx context.Context, specID int, gapLabel st
 	}
 	// Query: repo:owner/repo label:gap-analysis "derived from Issue #ID"
 	query := fmt.Sprintf("repo:%s/%s label:%s \"derived from Issue #%d\"", c.owner, c.repo, gapLabel, specID)
-	result, _, err := c.client.Search.Issues(ctx, query, &github.SearchOptions{})
+	result, resp, err := c.client.Search.Issues(ctx, query, &github.SearchOptions{})
+	c.bp.HandleResponse(resp, err)
 	if err != nil {
 		// Log error? For now assume false to be safe, or true to avoid dupes?
 		// Safe to return false (might duplicate), but strict to return true (might stall)?
@@ -150,7 +150,8 @@ func (c *Client) GetIssueContent(ctx context.Context, number int) (string, error
 	if err := c.wait(ctx); err != nil {
 		return "", err
 	}
-	issue, _, err := c.client.Issues.Get(ctx, c.owner, c.repo, number)
+	issue, resp, err := c.client.Issues.Get(ctx, c.owner, c.repo, number)
+	c.bp.HandleResponse(resp, err)
 	if err != nil {
 		return "", err
 	}
@@ -166,7 +167,8 @@ func (c *Client) CommentOnIssue(ctx context.Context, number int, body string) er
 		return err
 	}
 	comment := &github.IssueComment{Body: &body}
-	_, _, err := c.client.Issues.CreateComment(ctx, c.owner, c.repo, number, comment)
+	_, resp, err := c.client.Issues.CreateComment(ctx, c.owner, c.repo, number, comment)
+	c.bp.HandleResponse(resp, err)
 	return err
 }
 
@@ -177,7 +179,8 @@ func (c *Client) CloseIssue(ctx context.Context, number int) error {
 	}
 	state := "closed"
 	req := &github.IssueRequest{State: &state}
-	_, _, err := c.client.Issues.Edit(ctx, c.owner, c.repo, number, req)
+	_, resp, err := c.client.Issues.Edit(ctx, c.owner, c.repo, number, req)
+	c.bp.HandleResponse(resp, err)
 	return err
 }
 
@@ -186,7 +189,8 @@ func (c *Client) MergePR(ctx context.Context, number int) error {
 	if err := c.wait(ctx); err != nil {
 		return err
 	}
-	_, _, err := c.client.PullRequests.Merge(ctx, c.owner, c.repo, number, "Automated merge by Forge", nil)
+	_, resp, err := c.client.PullRequests.Merge(ctx, c.owner, c.repo, number, "Automated merge by Forge", nil)
+	c.bp.HandleResponse(resp, err)
 	return err
 }
 
@@ -197,7 +201,8 @@ func (c *Client) GetPRStatus(ctx context.Context, ref string) (string, error) {
 	}
 	// check-runs are better for Actions
 	// But simple implementation: use combined status
-	status, _, err := c.client.Repositories.GetCombinedStatus(ctx, c.owner, c.repo, ref, nil)
+	status, resp, err := c.client.Repositories.GetCombinedStatus(ctx, c.owner, c.repo, ref, nil)
+	c.bp.HandleResponse(resp, err)
 	if err != nil {
 		return "", err
 	}
@@ -209,7 +214,8 @@ func (c *Client) GetPR(ctx context.Context, number int) (*github.PullRequest, er
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	pr, _, err := c.client.PullRequests.Get(ctx, c.owner, c.repo, number)
+	pr, resp, err := c.client.PullRequests.Get(ctx, c.owner, c.repo, number)
+	c.bp.HandleResponse(resp, err)
 	return pr, err
 }
 
@@ -218,7 +224,8 @@ func (c *Client) GetFileContent(ctx context.Context, path string) (string, error
 	if err := c.wait(ctx); err != nil {
 		return "", err
 	}
-	content, _, _, err := c.client.Repositories.GetContents(ctx, c.owner, c.repo, path, nil)
+	content, _, resp, err := c.client.Repositories.GetContents(ctx, c.owner, c.repo, path, nil)
+	c.bp.HandleResponse(resp, err)
 	if err != nil {
 		return "", err
 	}
@@ -233,7 +240,8 @@ func (c *Client) ListFiles(ctx context.Context, path string) ([]string, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	_, dirContent, _, err := c.client.Repositories.GetContents(ctx, c.owner, c.repo, path, nil)
+	_, dirContent, resp, err := c.client.Repositories.GetContents(ctx, c.owner, c.repo, path, nil)
+	c.bp.HandleResponse(resp, err)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +260,8 @@ func (c *Client) DeleteBranch(ctx context.Context, branchName string) error {
 		return err
 	}
 	ref := fmt.Sprintf("refs/heads/%s", branchName)
-	_, err := c.client.Git.DeleteRef(ctx, c.owner, c.repo, ref)
+	resp, err := c.client.Git.DeleteRef(ctx, c.owner, c.repo, ref)
+	c.bp.HandleResponse(resp, err)
 	return err
 }
 
@@ -262,7 +271,8 @@ func (c *Client) DeleteFile(ctx context.Context, path, message string) error {
 		return err
 	}
 	// Get the file content to get the SHA
-	fileContent, _, _, err := c.client.Repositories.GetContents(ctx, c.owner, c.repo, path, nil)
+	fileContent, _, resp, err := c.client.Repositories.GetContents(ctx, c.owner, c.repo, path, nil)
+	c.bp.HandleResponse(resp, err)
 	if err != nil {
 		return err
 	}
@@ -274,6 +284,7 @@ func (c *Client) DeleteFile(ctx context.Context, path, message string) error {
 		Message: github.String(message),
 		SHA:     fileContent.SHA,
 	}
-	_, _, err = c.client.Repositories.DeleteFile(ctx, c.owner, c.repo, path, opts)
+	_, resp, err = c.client.Repositories.DeleteFile(ctx, c.owner, c.repo, path, opts)
+	c.bp.HandleResponse(resp, err)
 	return err
 }

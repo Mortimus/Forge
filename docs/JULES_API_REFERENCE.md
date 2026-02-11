@@ -6,7 +6,12 @@
 ## 1. Authentication
 Obtain API Key from [Jules Settings](https://jules.google.com/settings#api).
 
+**Service Endpoint**: `https://jules.googleapis.com`
+
+---
+
 ## 2. Sources
+See the detailed [Sources API Reference](JULES_SOURCES_API_REFERENCE.md) for full resource and method documentation.
 
 ### List Sources
 Retrieve list of connected repositories.
@@ -26,6 +31,7 @@ Retrieve list of connected repositories.
 ```
 
 ## 3. Sessions (Tasks)
+See the detailed [Sessions API Reference](JULES_SESSIONS_API_REFERENCE.md) for full resource and method documentation.
 
 ### Create Session (Trigger Task)
 Start a new coding task.

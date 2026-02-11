@@ -27,10 +27,10 @@ func setupMockServer() (*http.ServeMux, *httptest.Server, *Client) {
 	client.UploadURL = url
 
 	c := &Client{
-		client:  client,
-		owner:   "owner",
-		repo:    "repo",
-		limiter: time.NewTicker(1 * time.Millisecond),
+		client: client,
+		owner:  "owner",
+		repo:   "repo",
+		bp:     NewBackpressure(1 * time.Millisecond),
 	}
 
 	return mux, server, c

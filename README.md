@@ -4,7 +4,8 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/Mortimus/Forge)](https://goreportcard.com/report/github.com/Mortimus/Forge)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/Mortimus/Forge)](https://github.com/Mortimus/Forge/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
+[![Go Version](https://img.shields.io/github/go-mod/go-version/Mortimus/Forge)](https://github.com/Mortimus/Forge)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Mortimus/Forge/pulls)
 
 Forge is a **stateless, autonomous coding agent** that lives in your GitHub repository. He transforms **Markdown Specifications** into **Working Code** through an infinite loop of analysis, planning, and execution.
 
@@ -32,17 +33,25 @@ When Specs change, Forge wakes up:
 - **Analyzes** the difference between the Specs and the current Codebase.
 - **Drafts** an `IMPLEMENTATION_PLAN.md` detailing exactly what files need to change.
 - **Opens a PR** with this plan for review.
-- **Auto-Approval**: If he finds a Draft plan in the `main` branch, he assumes it is approved and actionable.
 
 ### 3. Decide (Resolution)
-Once an Implementation Plan is present (Draft or Approved):
+Once an Implementation Plan is present:
 - **Executes** the plan by writing/modifying code.
+- **Automated Interaction**: Forge automatically approves internal plans and handles agent follow-up questions to keep the loop moving safely.
 - **Opens a PR** with the finished code.
 
 ### 4. Act (Cleanup)
 After the Resolution PR is merged:
 - **Deletes** the `IMPLEMENTATION_PLAN.md` to indicate the cycle is complete.
 - **Sleeps** until new Specs or Plans appear.
+
+## 🛠️ Key Features
+
+-   **Spec-Driven Automation**: Converts Markdown specs to PRs automatically.
+-   **Intelligent Backpressure**: Built-in rate limiting and backpressure handlers for both GitHub and Google Jules APIs.
+-   **Automated Feedback**: Automatically provides "Best Judgement" to Jules sessions when they await user input for minor decisions.
+-   **Plan Approval Automation**: Automatically calls `:approvePlan` for tasks requiring plan confirmation.
+-   **Stateless Persistence**: Lightweight state saving for session tracking across service restarts.
 
 ## 🚀 Getting Started
 
@@ -77,21 +86,18 @@ Forge is configured via a YAML configuration file (default: `config.yaml`).
 
 ## 🎨 Advanced: Custom Prompts
 
-Forge uses **embedded prompt templates** for Gap Analysis and Resolution. You can override these to customize his behavior (e.g., to enforce specific architectural patterns or change the planning format).
+Forge uses **embedded prompt templates** for Gap Analysis and Resolution. You can override these to customize his behavior.
 
 1.  **Reference**: See [internal/prompts/templates](internal/prompts/templates) for the default templates.
-2.  **Override**: Copy a template to your server, modify it, and set the `gap_analysis_template_path` or `resolution_template_path` in your `config.yaml` to point to it.
+2.  **Override**: Copy a template to your server, modify it, and set the template paths in your `config.yaml`.
 
 ## 💾 State Persistence
 
-Forge automatically persists its state to disk (default: `forge_state.json`). This ensures that:
-- Active Jules sessions are tracked across restarts.
-- Daily usage limits are preserved per repository.
-- The application can be gracefully stopped and resumed without data loss.
+Forge automatically persists its state to disk (default: `forge_state.json`). This ensures that active Jules sessions and usage limits are preserved across service restarts.
 
 ## 🔍 Diagnostics
 
-If you're having trouble connecting to Jules or resolving your repository, use the built-in diagnostic mode:
+Use the built-in diagnostic tools to verify connectivity:
 
 ```bash
 # List all sources recognized by your Jules API Key

@@ -53,8 +53,9 @@ type ActiveSession struct {
 	Type      SessionType
 	PRURL     string
 	StartTime time.Time
-	State     string // Jules Session State
-	Handled   bool   // Whether completion has been handled
+	State              string // Jules Session State
+	Handled            bool   // Whether completion has been handled
+	LastAutomatedState string // Last state where an automated action was taken
 }
 
 // SessionType defines the purpose of a Jules session.
@@ -267,11 +268,48 @@ func (o *Orchestrator) processRepo(ctx context.Context, rc *RepoContext) {
                  delete(o.activeSessions, mySession.ID)
              }
              o.mu.Unlock()
+             return
         }
+        
+        // Automated Interactions for Non-Terminal States
+        o.handleAutomatedInteractions(ctx, rc, mySession)
         return 
     }
 
     o.findNewWork(ctx, rc)
+}
+
+func (o *Orchestrator) handleAutomatedInteractions(ctx context.Context, rc *RepoContext, sess *ActiveSession) {
+	o.mu.Lock()
+	if sess.LastAutomatedState == sess.State {
+		o.mu.Unlock()
+		return
+	}
+	state := sess.State
+	o.mu.Unlock()
+
+	switch state {
+	case "AWAITING_PLAN_APPROVAL":
+		log.Printf("[%s] Automatically approving plan for session %s", rc.Config.GithubRepo, sess.ID)
+		if err := o.jules.ApprovePlan(ctx, sess.ID); err != nil {
+			log.Printf("[%s] Failed to approve plan: %v", rc.Config.GithubRepo, err)
+			return
+		}
+		o.mu.Lock()
+		sess.LastAutomatedState = state
+		o.mu.Unlock()
+
+	case "AWAITING_USER_FEEDBACK":
+		log.Printf("[%s] Automatically sending 'best judgement' to session %s", rc.Config.GithubRepo, sess.ID)
+		msg := "Use your best judgement to continue working on the task and keep our automation up and running."
+		if err := o.jules.SendMessage(ctx, sess.ID, msg); err != nil {
+			log.Printf("[%s] Failed to send message: %v", rc.Config.GithubRepo, err)
+			return
+		}
+		o.mu.Lock()
+		sess.LastAutomatedState = state
+		o.mu.Unlock()
+	}
 }
 
 func (o *Orchestrator) findNewWork(ctx context.Context, rc *RepoContext) {
