@@ -102,6 +102,9 @@ Use the built-in diagnostic tools to verify connectivity:
 ```bash
 # List all sources recognized by your Jules API Key
 ./forge --list-sources
+
+# Delete all active Jules sessions (useful for cleanup)
+./forge --delete-sessions
 ```
 
 ## 📄 License

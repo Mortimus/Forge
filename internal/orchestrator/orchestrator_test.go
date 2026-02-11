@@ -158,6 +158,38 @@ func TestGlobalRateLimit(t *testing.T) {
 		t.Error("Second check succeeded, expected rate limit error")
 	}
 }
+func TestHandleCompletion_Cleanup(t *testing.T) {
+	cfg := createTestConfig()
+	jMock := &mocks.JulesMock{}
+	ghMock := &mocks.GithubMock{}
+	stats := stats.New()
+	o := New(cfg, jMock, stats, nil)
+
+	rc := &RepoContext{
+		Config: cfg.Repositories[0],
+		GH:     ghMock,
+	}
+
+	sessionDeleted := false
+	jMock.DeleteSessionFunc = func(ctx context.Context, sessionName string) error {
+		if sessionName == "session1" {
+			sessionDeleted = true
+		}
+		return nil
+	}
+
+	jMock.GetSessionFunc = func(ctx context.Context, sessionName string) (*jules.Session, error) {
+		return &jules.Session{Name: "session1", State: "SUCCEEDED"}, nil
+	}
+
+	sess := &ActiveSession{ID: "session1", State: "SUCCEEDED"}
+	o.handleCompletion(context.Background(), rc, sess)
+
+	if !sessionDeleted {
+		t.Error("Session should have been deleted during completion")
+	}
+}
+
 func createTempPersistence(t *testing.T) (*persistence.Manager, string) {
 	tmpFile, err := os.CreateTemp("", "state.json")
 	if err != nil {

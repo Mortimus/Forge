@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -81,6 +82,7 @@ type GithubRepoContext struct {
 // Session represents a Jules coding session.
 type Session struct {
 	Name          string          `json:"name"` // Session ID basically
+	Title         string          `json:"title"`
 	State         string          `json:"state"`
 	SourceContext SourceContext   `json:"sourceContext"`
 	Outputs       []SessionOutput `json:"outputs"`
@@ -101,41 +103,58 @@ type PullRequestOutput struct {
 
 func (c *Client) do(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
 	var bodyReader io.Reader
+	var jsonBody []byte
 	if body != nil {
-		jsonBody, err := json.Marshal(body)
+		var err error
+		jsonBody, err = json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal request body: %w", err)
 		}
-		bodyReader = bytes.NewBuffer(jsonBody)
 	}
 
 	url := fmt.Sprintf("%s%s", c.BaseURL, path)
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+
+	maxRetries := 3
+	for i := 0; i <= maxRetries; i++ {
+		if jsonBody != nil {
+			bodyReader = bytes.NewBuffer(jsonBody)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("X-Goog-Api-Key", c.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		// Wait for rate limit
+		if waitDuration := c.bp.CalculateWait(); waitDuration > 100*time.Millisecond {
+			log.Printf("[JULES] Rate limit hit. Waiting %v before continuing...", waitDuration.Round(100*time.Millisecond))
+		}
+		if err := c.bp.Wait(ctx); err != nil {
+			return nil, err
+		}
+
+		resp, err := c.httpClient.Do(req)
+		c.bp.HandleResponse(resp, err)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusTooManyRequests && i < maxRetries {
+			continue // Retry after backoff handled by HandleResponse/Wait
+		}
+
+		if resp.StatusCode >= 400 {
+			respBody, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("api error %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		return io.ReadAll(resp.Body)
 	}
-
-	req.Header.Set("X-Goog-Api-Key", c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	// Wait for rate limit
-	if err := c.bp.Wait(ctx); err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	c.bp.HandleResponse(resp, err)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("api error %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	return io.ReadAll(resp.Body)
+	return nil, fmt.Errorf("max retries exceeded")
 }
 
 // ListSources retrieves all available data sources (repositories) from the Jules API.
@@ -265,5 +284,11 @@ func (c *Client) ApprovePlan(ctx context.Context, sessionName string) error {
 	// sessionName is full resource name e.g. "sessions/123"
 	path := fmt.Sprintf("/v1alpha/%s:approvePlan", strings.TrimPrefix(sessionName, "/"))
 	_, err := c.do(ctx, "POST", path, nil)
+	return err
+}
+
+func (c *Client) DeleteSession(ctx context.Context, sessionName string) error {
+	path := fmt.Sprintf("/v1alpha/%s", strings.TrimPrefix(sessionName, "/"))
+	_, err := c.do(ctx, "DELETE", path, nil)
 	return err
 }

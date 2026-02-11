@@ -15,6 +15,7 @@ type Backpressure struct {
 	brokenUntil  time.Time
 	retryAfter   time.Time
 	minInterval  time.Duration
+	lastReqStart time.Time // When the last request started waiting or was sent
 }
 
 // NewBackpressure creates a new Backpressure handler.
@@ -26,22 +27,33 @@ func NewBackpressure(minInterval time.Duration) *Backpressure {
 
 // Wait blocks until the next request is allowed.
 func (b *Backpressure) Wait(ctx context.Context) error {
-	b.mu.RLock()
+	b.mu.Lock() // Writer lock because we'll update lastReqStart
+	defer b.mu.Unlock()
+
 	waitDuration := b.calculateWait()
-	b.mu.RUnlock()
 
 	if waitDuration > 0 {
 		timer := time.NewTimer(waitDuration)
 		defer timer.Stop()
 
+		b.mu.Unlock() // Release while sleeping
 		select {
 		case <-ctx.Done():
+			b.mu.Lock()
 			return ctx.Err()
 		case <-timer.C:
 		}
+		b.mu.Lock()
 	}
 
+	b.lastReqStart = time.Now()
 	return nil
+}
+
+func (b *Backpressure) CalculateWait() time.Duration {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.calculateWait()
 }
 
 func (b *Backpressure) calculateWait() time.Duration {
@@ -57,8 +69,15 @@ func (b *Backpressure) calculateWait() time.Duration {
 		return b.retryAfter.Sub(now)
 	}
 
-	// 3. Fallback to min interval
-	return b.minInterval
+	// 3. Fallback to min interval (Ensure at least minInterval between starts)
+	if !b.lastReqStart.IsZero() {
+		elapsed := now.Sub(b.lastReqStart)
+		if elapsed < b.minInterval {
+			return b.minInterval - elapsed
+		}
+	}
+
+	return 0
 }
 
 // HandleResponse updates the backpressure state based on the API response headers.

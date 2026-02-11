@@ -11,4 +11,5 @@ type ClientInterface interface {
 	ListSessions(ctx context.Context) ([]Session, error)
 	SendMessage(ctx context.Context, sessionName, message string) error
 	ApprovePlan(ctx context.Context, sessionName string) error
+	DeleteSession(ctx context.Context, sessionName string) error
 }

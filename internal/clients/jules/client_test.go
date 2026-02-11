@@ -203,3 +203,80 @@ func TestGetSession_RequestError(t *testing.T) {
 		t.Error("expected error for invalid URL, got nil")
 	}
 }
+func TestDeleteSession(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := NewClient("test-api-key", 1*time.Millisecond)
+	c.BaseURL = server.URL
+
+	sessionName := "sessions/123"
+
+	mux.HandleFunc("/v1alpha/sessions/123", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" {
+			t.Errorf("Method = %v, want DELETE", r.Method)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	err := c.DeleteSession(context.Background(), sessionName)
+	if err != nil {
+		t.Fatalf("DeleteSession returned error: %v", err)
+	}
+}
+
+func TestBackpressure_SmartRateLimit(t *testing.T) {
+	interval := 100 * time.Millisecond
+	bp := NewBackpressure(interval)
+
+	// First request should not wait
+	start := time.Now()
+	err := bp.Wait(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait1 := time.Since(start)
+	if wait1 > 50*time.Millisecond {
+		t.Errorf("First Wait() took %v, want < 50ms", wait1)
+	}
+
+	// Second request should wait
+	start = time.Now()
+	err = bp.Wait(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait2 := time.Since(start)
+	if wait2 < interval {
+		t.Errorf("Second Wait() took %v, want >= %v", wait2, interval)
+	}
+}
+
+func TestClient_RetryOn429(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := NewClient("test-api-key", 1*time.Millisecond)
+	c.BaseURL = server.URL
+
+	attempts := 0
+	mux.HandleFunc("/v1alpha/sessions", func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts <= 2 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Write([]byte(`{"sessions": []}`))
+	})
+
+	_, err := c.ListSessions(context.Background())
+	if err != nil {
+		t.Fatalf("ListSessions failed: %v", err)
+	}
+
+	if attempts != 3 {
+		t.Errorf("Expected 3 attempts, got %d", attempts)
+	}
+}

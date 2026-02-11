@@ -492,6 +492,13 @@ func (o *Orchestrator) startResolution(ctx context.Context, rc *RepoContext, pla
 func (o *Orchestrator) handleCompletion(ctx context.Context, rc *RepoContext, sess *ActiveSession) {
 	log.Printf("[%s] Completing session %s (%s)", rc.Config.GithubRepo, sess.ID, sess.State)
 
+	defer func() {
+		log.Printf("[%s] Deleting session %s", rc.Config.GithubRepo, sess.ID)
+		if err := o.jules.DeleteSession(ctx, sess.ID); err != nil {
+			log.Printf("[%s] Failed to delete session %s: %v", rc.Config.GithubRepo, sess.ID, err)
+		}
+	}()
+
 	fullSess, err := o.jules.GetSession(ctx, sess.ID)
 	if err != nil {
 		log.Printf("Error fetching session %s: %v", sess.ID, err)

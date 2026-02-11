@@ -14,6 +14,7 @@ type JulesMock struct {
 	ListSessionsFunc  func(ctx context.Context) ([]jules.Session, error)
 	SendMessageFunc   func(ctx context.Context, sessionName, message string) error
 	ApprovePlanFunc   func(ctx context.Context, sessionName string) error
+	DeleteSessionFunc func(ctx context.Context, sessionName string) error
 }
 
 var _ jules.ClientInterface = (*JulesMock)(nil)
@@ -56,6 +57,13 @@ func (m *JulesMock) SendMessage(ctx context.Context, sessionName, message string
 func (m *JulesMock) ApprovePlan(ctx context.Context, sessionName string) error {
 	if m.ApprovePlanFunc != nil {
 		return m.ApprovePlanFunc(ctx, sessionName)
+	}
+	return nil
+}
+
+func (m *JulesMock) DeleteSession(ctx context.Context, sessionName string) error {
+	if m.DeleteSessionFunc != nil {
+		return m.DeleteSessionFunc(ctx, sessionName)
 	}
 	return nil
 }

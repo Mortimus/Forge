@@ -11,14 +11,21 @@ func TestBackpressure_Wait(t *testing.T) {
 	bp := NewBackpressure(10 * time.Millisecond)
 
 	// 1. Initial wait
-	start := time.Now()
+	// First call should be instant
 	err := bp.Wait(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second call should wait at least minInterval (10ms)
+	start := time.Now()
+	err = bp.Wait(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	elapsed := time.Since(start)
 	if elapsed < 10*time.Millisecond {
-		t.Errorf("expected wait >= 10ms, got %v", elapsed)
+		t.Errorf("expected second wait >= 10ms, got %v", elapsed)
 	}
 
 	// 2. Retry-After Header
