@@ -107,6 +107,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 
 	// Load State (Global)
 	if o.pm != nil {
+		o.debugLog("[INIT] Loading persistence state...")
 		o.loadState()
 	}
 
@@ -135,59 +136,73 @@ func (o *Orchestrator) monitorLoop(ctx context.Context) {
 	ticker := time.NewTicker(o.cfg.CheckInterval())
 	defer ticker.Stop()
 
+    o.debugLog("[MONITOR] Initial session sync...")
     o.syncActiveSessions(ctx)
+    o.debugLog("[MONITOR] Initial sync complete. Waiting %v until next check.", o.cfg.CheckInterval())
 
 	for {
 		select {
 		case <-ctx.Done():
+			o.debugLog("[MONITOR] Context cancelled, stopping monitor loop.")
 			return
 		case <-ticker.C:
+			o.debugLog("[MONITOR] Starting global session sync cycle")
 			backoff := o.getBackoffDuration()
 			if backoff > 0 {
+				o.debugLog("[MONITOR] Backoff active, waiting %v", backoff)
 				select {
 				case <-ctx.Done():
+					o.debugLog("[MONITOR] Context cancelled during backoff, stopping monitor loop.")
 					return
 				case <-time.After(backoff):
-					// Backoff finished, try again
+					o.debugLog("[MONITOR] Backoff finished")
 				}
 			}
 			o.syncActiveSessions(ctx)
+			o.debugLog("[MONITOR] Cycle complete, waiting %v until next check", o.cfg.CheckInterval())
 		}
 	}
 }
 
 func (o *Orchestrator) repoLoop(ctx context.Context, rc *RepoContext) {
+	o.debugLog("[%s] Starting repository loop...", rc.Config.GithubRepo)
 	ticker := time.NewTicker(o.cfg.CheckInterval())
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			o.debugLog("[%s] Context cancelled, stopping repo loop.", rc.Config.GithubRepo)
 			return
 		case <-ticker.C:
+			o.debugLog("[%s] Starting repo processing cycle", rc.Config.GithubRepo)
 			backoff := o.getBackoffDuration()
 			if backoff > 0 {
+				o.debugLog("[%s] Backoff active, waiting %v", rc.Config.GithubRepo, backoff)
 				select {
 				case <-ctx.Done():
+					o.debugLog("[%s] Context cancelled during backoff, stopping repo loop.", rc.Config.GithubRepo)
 					return
 				case <-time.After(backoff):
-					// Backoff finished
+					o.debugLog("[%s] Backoff finished", rc.Config.GithubRepo)
 				}
 			}
 			o.processRepo(ctx, rc)
+			o.debugLog("[%s] Cycle complete, waiting %v until next check", rc.Config.GithubRepo, o.cfg.CheckInterval())
 		}
 	}
 }
 
-// syncActiveSessions fetches all sessions from Jules and updates local state.
 func (o *Orchestrator) syncActiveSessions(ctx context.Context) {
+	o.debugLog("[SYNC] Fetching active sessions from Jules API...")
 	sessions, err := o.jules.ListSessions(ctx)
 	if err != nil {
-		log.Printf("Error listing Jules sessions: %v", err)
+		log.Printf("[SYNC] Error listing Jules sessions: %v", err)
 		// API error -> increase backoff
 		o.increaseBackoff()
 		return
 	}
+	o.debugLog("[SYNC] Successfully fetched %d sessions from Jules API.", len(sessions))
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -217,14 +232,19 @@ func (o *Orchestrator) syncActiveSessions(ctx context.Context) {
         }
 
         if repoName == "" {
+            o.debugLog("[SYNC] Skipping session %s: No matching repository found for source '%s'", s.Name, s.SourceContext.Source)
             continue
         }
 
 		if current, ok := existing[s.Name]; ok {
-			current.State = s.State
+			if current.State != s.State {
+				o.debugLog("[SYNC] Updating session %s state from %s to %s (Repo: %s)", s.Name, current.State, s.State, repoName)
+				current.State = s.State
+			}
 		} else {
              isTerminal := isTerminalState(s.State)
              if !isTerminal {
+                  o.debugLog("[SYNC] Adding new active session %s (State: %s, Repo: %s)", s.Name, s.State, repoName)
                   o.activeSessions[s.Name] = &ActiveSession{
                       ID: s.Name,
                       Repo: repoName,
@@ -232,18 +252,21 @@ func (o *Orchestrator) syncActiveSessions(ctx context.Context) {
                       StartTime: time.Now(),
                       State: s.State,
                   }
+             } else {
+                 o.debugLog("[SYNC] Skipping new session %s in terminal state %s", s.Name, s.State)
              }
 		}
 	}
     
-    o.saveStateInternal() // Call internal save (already locked) logic if separate, or rely on periodic save
-    // I need to implement saveState so it locks properly.
+    o.debugLog("[SYNC] State synchronized: %d active sessions", len(o.activeSessions))
+    o.saveStateInternal()
 }
 
 func (o *Orchestrator) processRepo(ctx context.Context, rc *RepoContext) {
 	if time.Since(rc.LastReset) > 24*time.Hour {
          rc.DailyCount = 0
          rc.LastReset = time.Now()
+         o.debugLog("[%s] Daily count reset to 0.", rc.Config.GithubRepo)
     }
 
     o.mu.Lock()
@@ -257,6 +280,7 @@ func (o *Orchestrator) processRepo(ctx context.Context, rc *RepoContext) {
     o.mu.Unlock()
 
     if mySession != nil {
+        o.debugLog("[%s] Active session %s found (State: %s). Processing...", rc.Config.GithubRepo, mySession.ID, mySession.State)
         if isTerminalState(mySession.State) {
              o.mu.Lock()
              if !mySession.Handled {
@@ -265,6 +289,10 @@ func (o *Orchestrator) processRepo(ctx context.Context, rc *RepoContext) {
                  o.handleCompletion(ctx, rc, mySession)
                  
                  o.mu.Lock()
+                 delete(o.activeSessions, mySession.ID)
+                 o.debugLog("[%s] Removed completed session %s from active sessions.", rc.Config.GithubRepo, mySession.ID)
+             } else {
+                 o.debugLog("[%s] Session %s is in terminal state %s but already handled. Removing.", rc.Config.GithubRepo, mySession.ID, mySession.State)
                  delete(o.activeSessions, mySession.ID)
              }
              o.mu.Unlock()
@@ -283,6 +311,7 @@ func (o *Orchestrator) handleAutomatedInteractions(ctx context.Context, rc *Repo
 	o.mu.Lock()
 	if sess.LastAutomatedState == sess.State {
 		o.mu.Unlock()
+		o.debugLog("[%s] Session %s in state %s already handled, skipping automated interaction.", rc.Config.GithubRepo, sess.ID, sess.State)
 		return
 	}
 	state := sess.State
@@ -298,6 +327,7 @@ func (o *Orchestrator) handleAutomatedInteractions(ctx context.Context, rc *Repo
 		o.mu.Lock()
 		sess.LastAutomatedState = state
 		o.mu.Unlock()
+		o.debugLog("[%s] Approved plan for session %s.", rc.Config.GithubRepo, sess.ID)
 
 	case "AWAITING_USER_FEEDBACK":
 		log.Printf("[%s] Automatically sending 'best judgement' to session %s", rc.Config.GithubRepo, sess.ID)
@@ -309,36 +339,43 @@ func (o *Orchestrator) handleAutomatedInteractions(ctx context.Context, rc *Repo
 		o.mu.Lock()
 		sess.LastAutomatedState = state
 		o.mu.Unlock()
+		o.debugLog("[%s] Sent 'best judgement' message to session %s.", rc.Config.GithubRepo, sess.ID)
+	default:
+		o.debugLog("[%s] No automated interaction defined for state %s for session %s.", rc.Config.GithubRepo, state, sess.ID)
 	}
 }
 
 func (o *Orchestrator) findNewWork(ctx context.Context, rc *RepoContext) {
+	o.debugLog("[%s] Checking for new work opportunities...", rc.Config.GithubRepo)
+
+	// 1. Check for open PRs
+	o.debugLog("[%s] Discovery: Listing open Pull Requests", rc.Config.GithubRepo)
 	prs, err := rc.GH.ListOpenPullRequests(ctx)
 	if err != nil {
 		log.Printf("[%s] Failed to list open PRs: %v", rc.Config.GithubRepo, err)
 		return
 	}
 	if len(prs) > 0 {
-		// Log sparingly
-        // log.Printf("[%s] Blocking: PR #%d Open", rc.Config.GithubRepo, prs[0].GetNumber())
+		o.debugLog("[%s] Blocking: Found %d open PR(s). Skipping new work.", rc.Config.GithubRepo, len(prs))
 		return
 	}
+	o.debugLog("[%s] Discovery: No open PRs found.", rc.Config.GithubRepo)
 
+	// 2. Refresh Specs (if needed)
 	var files []string
-	if time.Since(rc.LastSpecCheck) < 5*time.Minute && rc.CachedSpecs != nil {
-		// Use Cache
-		files = rc.CachedSpecs
-	} else {
-		// Fetch new
-		var err error
+	if time.Since(rc.LastSpecCheck) > 10*time.Minute || len(rc.CachedSpecs) == 0 {
+		o.debugLog("[%s] Discovery: Scanning spec directory %s", rc.Config.GithubRepo, rc.Config.SpecPath)
 		files, err = rc.GH.ListFiles(ctx, rc.Config.SpecPath)
 		if err != nil {
 			o.debugLog("[%s] Failed to list specs: %v", rc.Config.GithubRepo, err)
 			return
 		}
-		// Update Cache
 		rc.CachedSpecs = files
 		rc.LastSpecCheck = time.Now()
+		o.debugLog("[%s] Discovery: Found %d spec(s) and updated cache.", rc.Config.GithubRepo, len(rc.CachedSpecs))
+	} else {
+		o.debugLog("[%s] Discovery: Using cached specs (%d specs). Next refresh in %v.", rc.Config.GithubRepo, len(rc.CachedSpecs), (10*time.Minute - time.Since(rc.LastSpecCheck)).Round(time.Second))
+		files = rc.CachedSpecs
 	}
 
 	var specPaths []string
@@ -350,15 +387,18 @@ func (o *Orchestrator) findNewWork(ctx context.Context, rc *RepoContext) {
 	}
 
 	if len(specPaths) == 0 {
+		o.debugLog("[%s] Discovery: No specs found. Skipping.", rc.Config.GithubRepo)
 		return
 	}
+	o.debugLog("[%s] Discovery: Found %d markdown spec files.", rc.Config.GithubRepo, len(specPaths))
 
-	planPath := rc.Config.ImplPlanPath
-	planContent, err := rc.GH.GetFileContent(ctx, planPath)
+	// 3. Look for Implementation Plan
+	o.debugLog("[%s] Discovery: Checking for existing Implementation Plan at %s", rc.Config.GithubRepo, rc.Config.ImplPlanPath)
+	planContent, err := rc.GH.GetFileContent(ctx, rc.Config.ImplPlanPath)
 	planExists := err == nil && planContent != ""
 
 	if !planExists {
-		o.debugLog("[%s] Starting Gap Analysis.", rc.Config.GithubRepo)
+		o.debugLog("[%s] Starting Gap Analysis: No implementation plan found.", rc.Config.GithubRepo)
 		o.startGapAnalysis(ctx, rc, specPaths)
 		return
 	}
