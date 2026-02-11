@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -43,9 +44,10 @@ func TestBackpressure_Wait(t *testing.T) {
 	}
 
 	// 3. Circuit Breaker
-	bp.HandleResponse(nil, github.ErrInternalServer)
-	bp.HandleResponse(nil, github.ErrInternalServer)
-	bp.HandleResponse(nil, github.ErrInternalServer)
+	testErr := fmt.Errorf("internal server error")
+	bp.HandleResponse(nil, testErr)
+	bp.HandleResponse(nil, testErr)
+	bp.HandleResponse(nil, testErr)
 
 	if !bp.IsBroken() {
 		t.Error("expected circuit breaker to be broken")
