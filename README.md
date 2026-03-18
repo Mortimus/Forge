@@ -63,6 +63,56 @@ We provide a comprehensive guide to setting up Forge and your first project.
 - [Rust Calculator Example](examples/rust-calculator/): A full reference project structure.
 - [Installation](docs/EXAMPLE_IMPLEMENTATION.md#part-1-server-setup): How to install the Forge service.
 
+### Proxmox LXC Setup
+
+To run Forge isolated in a Proxmox LXC container:
+
+1. Create a new LXC container (Debian or Arch Linux template recommended).
+2. Allocate minimal resources (e.g., 1 Core, 512MB RAM, 8GB Storage).
+3. Start the container and open a console.
+4. Download the latest Forge release and set up the systemd service:
+
+```bash
+# Update and install dependencies (Debian/Ubuntu example)
+apt-get update && apt-get install -y wget curl systemd
+
+# Download the latest Forge binary
+wget https://github.com/Mortimus/Forge/releases/latest/download/forge-linux-amd64 -O /usr/local/bin/forge
+chmod +x /usr/local/bin/forge
+
+# Create configuration directory
+mkdir -p /etc/forge
+
+# Create your configuration file
+cat << 'EOF' > /etc/forge/config.yaml
+jules_api_key: "YOUR_JULES_API_KEY"
+repositories:
+  - github_repo: "Owner/Repo"
+    github_pat: "YOUR_GITHUB_PAT"
+EOF
+
+# Set up the systemd service using our example template
+# Customize paths if you are not running as root in /etc/forge
+cat << 'EOF' > /etc/systemd/system/forge.service
+[Unit]
+Description=Forge SDD Bot
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/forge -config /etc/forge/config.yaml
+WorkingDirectory=/etc/forge
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start the service
+systemctl daemon-reload
+systemctl enable --now forge.service
+```
+
 ## ⚙️ Configuration
 
 Forge is configured via a YAML configuration file (default: `config.yaml`).

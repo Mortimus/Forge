@@ -231,3 +231,44 @@ func createTempPersistence(t *testing.T) (*persistence.Manager, string) {
 
 	return pm, tmpFile.Name()
 }
+
+func TestHandleAutomatedInteractions_AwaitingUserFeedback(t *testing.T) {
+	cfg := createTestConfig()
+	cfg.Repositories[0].ProceedTemplatePath = "PROCEED.md"
+	jMock := &mocks.JulesMock{}
+	ghMock := &mocks.GithubMock{}
+	s := stats.New()
+	o := New(cfg, jMock, s, nil)
+
+	rc := &RepoContext{
+		Config: cfg.Repositories[0],
+		GH:     ghMock,
+	}
+
+	ghMock.GetFileContentFunc = func(ctx context.Context, path string) (string, error) {
+		if path == "PROCEED.md" {
+			return "Proceed with the test", nil
+		}
+		return "", errors.New("not found")
+	}
+
+	sentMsg := ""
+	jMock.SendMessageFunc = func(ctx context.Context, sessionID, message string) error {
+		sentMsg = message
+		return nil
+	}
+
+	sess := &ActiveSession{
+		ID:    "session1",
+		State: "AWAITING_USER_FEEDBACK",
+	}
+
+	o.handleAutomatedInteractions(context.Background(), rc, sess)
+
+	if sentMsg != "Proceed with the test" {
+		t.Errorf("Expected sent message to be 'Proceed with the test', got '%s'", sentMsg)
+	}
+	if sess.LastAutomatedState != "AWAITING_USER_FEEDBACK" {
+		t.Errorf("Expected LastAutomatedState to be 'AWAITING_USER_FEEDBACK', got '%s'", sess.LastAutomatedState)
+	}
+}

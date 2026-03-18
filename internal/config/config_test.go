@@ -48,6 +48,9 @@ repositories:
 	if cfg.Repositories[0].GithubPAT != "test_pat" {
 		t.Errorf("PAT = %v, want test_pat", cfg.Repositories[0].GithubPAT)
 	}
+	if cfg.Repositories[0].ProceedTemplatePath != "PROCEED.md" {
+		t.Errorf("ProceedTemplatePath = %v, want PROCEED.md", cfg.Repositories[0].ProceedTemplatePath)
+	}
 }
 
 func TestLoad_MissingRequired(t *testing.T) {

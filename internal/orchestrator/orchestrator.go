@@ -240,6 +240,7 @@ func (o *Orchestrator) syncActiveSessions(ctx context.Context) {
 			if current.State != s.State {
 				o.debugLog("[SYNC] Updating session %s state from %s to %s (Repo: %s)", s.Name, current.State, s.State, repoName)
 				current.State = s.State
+				current.LastAutomatedState = "" // Clear automation lock on state change to allow repeated automated interactions
 			}
 		} else {
 			isTerminal := isTerminalState(s.State)
@@ -330,8 +331,8 @@ func (o *Orchestrator) handleAutomatedInteractions(ctx context.Context, rc *Repo
 		o.debugLog("[%s] Approved plan for session %s.", rc.Config.GithubRepo, sess.ID)
 
 	case "AWAITING_USER_FEEDBACK":
-		log.Printf("[%s] Automatically sending 'best judgement' to session %s", rc.Config.GithubRepo, sess.ID)
-		msg := "Use your best judgement"
+		msg := o.getProceedMessage(ctx, rc)
+		log.Printf("[%s] Automatically sending automated response to session %s", rc.Config.GithubRepo, sess.ID)
 		if err := o.jules.SendMessage(ctx, sess.ID, msg); err != nil {
 			log.Printf("[%s] Failed to send message: %v", rc.Config.GithubRepo, err)
 			return
@@ -339,7 +340,7 @@ func (o *Orchestrator) handleAutomatedInteractions(ctx context.Context, rc *Repo
 		o.mu.Lock()
 		sess.LastAutomatedState = state
 		o.mu.Unlock()
-		o.debugLog("[%s] Sent 'best judgement' message to session %s.", rc.Config.GithubRepo, sess.ID)
+		o.debugLog("[%s] Sent automated response to session %s.", rc.Config.GithubRepo, sess.ID)
 	default:
 		o.debugLog("[%s] No automated interaction defined for state %s for session %s.", rc.Config.GithubRepo, state, sess.ID)
 	}
@@ -623,6 +624,14 @@ func (o *Orchestrator) getAgentsMemory(ctx context.Context, rc *RepoContext) str
 	content, err := rc.GH.GetFileContent(ctx, rc.Config.AgentsPromptPath)
 	if err != nil {
 		return "No memory file found."
+	}
+	return content
+}
+
+func (o *Orchestrator) getProceedMessage(ctx context.Context, rc *RepoContext) string {
+	content, err := rc.GH.GetFileContent(ctx, rc.Config.ProceedTemplatePath)
+	if err != nil || strings.TrimSpace(content) == "" {
+		return "Use your best judgement"
 	}
 	return content
 }

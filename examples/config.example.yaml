@@ -19,3 +19,4 @@ repositories:
     # Optional template overrides
     # gap_analysis_template_path: "templates/gap_analysis.md"
     # resolution_template_path: "templates/resolution.md"
+    # proceed_template_path: "PROCEED.md"

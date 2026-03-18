@@ -23,6 +23,7 @@ type RepositoryConfig struct {
 	// Local Template Overrides
 	GapAnalysisTemplatePath string `yaml:"gap_analysis_template_path"`
 	ResolutionTemplatePath  string `yaml:"resolution_template_path"`
+	ProceedTemplatePath     string `yaml:"proceed_template_path"`
 }
 
 // Config holds all configuration parameters for the application.
@@ -58,6 +59,9 @@ func (c *Config) SetDefaults() {
 		}
 		if c.Repositories[i].SystemPromptPath == "" {
 			c.Repositories[i].SystemPromptPath = "SYSTEM_PROMPT.md"
+		}
+		if c.Repositories[i].ProceedTemplatePath == "" {
+			c.Repositories[i].ProceedTemplatePath = "PROCEED.md"
 		}
 	}
 }
