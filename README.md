@@ -126,7 +126,7 @@ Forge is configured via a YAML configuration file (default: `config.yaml`).
 | `max_sessions_per_day` | Daily safety limit for Jules sessions | `100` |
 | `state_file_path` | Path to persistent state file | `forge_state.json` |
 | `debug` | Enable verbose logging | `false` |
-| `auto_merge` | Automatically merge PRs | `true` |
+| `auto_merge` | Automatically merge PRs | `false` |
 | `spec_path` | Path to Spec files | `docs/spec` |
 | `impl_plan_path` | Path to Implementation Plan | `IMPLEMENTATION_PLAN.md` |
 | `agents_prompt_path` | Path to Context Memory | `AGENTS.md` |
